@@ -22,7 +22,7 @@ jobs:
         run: npm install
 
       - name: Build Windows EXE (NSIS installer + portable)
-        run: npx electron-builder --win nsis portable --x64
+        run: npx electron-builder --win nsis portable --x64 --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
