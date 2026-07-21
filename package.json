@@ -32,7 +32,7 @@
         { "target": "portable", "arch": ["x64"] }
       ],
       "icon": "assets/app-icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -44,7 +44,7 @@
       "perMachine": false
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     }
   }
 }

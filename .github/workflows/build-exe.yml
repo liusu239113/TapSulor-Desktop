@@ -1,9 +1,14 @@
-name: Build Windows EXE
+name: Build and Release Windows EXE
 
 on:
   push:
     branches: [main, master]
+    tags:
+      - 'v*'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -24,10 +29,43 @@ jobs:
       - name: Build Windows EXE (NSIS installer + portable)
         run: npx electron-builder --win nsis portable --x64 --publish never
 
-      - name: Upload artifacts
+      - name: Upload artifacts (for Actions page)
         uses: actions/upload-artifact@v4
         with:
-          name: TapSulor-Windows-v1.0.1
+          name: TapSulor-Windows-${{ github.ref_name }}
           path: |
             dist/*.exe
           if-no-files-found: error
+
+      - name: Release (tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TapSulor ${{ github.ref_name }}
+          body: |
+            ## TapSulor Windows 版本 ${{ github.ref_name }}
+
+            - **TapSulor-Setup-x64.exe**: 安装版（推荐，自动创建开始菜单和桌面快捷方式）
+            - **TapSulor-Portable-x64.exe**: 便携版（免安装，双击直接运行）
+          files: |
+            dist/*.exe
+          draft: false
+          prerelease: false
+
+      - name: Release (latest/dev build)
+        if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TapSulor Latest (Dev Build)
+          tag_name: latest
+          body: |
+            ## TapSulor Windows 最新开发版
+
+            这是 main 分支的自动构建版本。
+
+            - **TapSulor-Setup-x64.exe**: 安装版（推荐，自动创建开始菜单和桌面快捷方式）
+            - **TapSulor-Portable-x64.exe**: 便携版（免安装，双击直接运行）
+          files: |
+            dist/*.exe
+          draft: false
+          prerelease: true
