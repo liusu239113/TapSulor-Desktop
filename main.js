@@ -106,8 +106,8 @@ function normalizeStudio(s) {
   const id = String(s.id || s.developerId || s.developer_id || '').trim();
   if (!id) return null;
   const name = toSafeString(s.name || s.nickname) || ('开发者 ' + id.slice(-4));
-  // logo 字段优先级：logo > avatar > icon > logo_url > avatar_url
-  const logo = s.logo || s.avatar || s.icon || s.logo_url || s.avatar_url || '';
+  // logo 字段优先级（对齐安卓端）：logo > developer_logo > developerLogo > avatar > icon > avatar_url > logo_url
+  const logo = firstNonBlank(s, 'logo', 'developer_logo', 'developerLogo', 'avatar', 'icon', 'avatar_url', 'logo_url');
   return { id, name, logo: normalizeUrl(logo) };
 }
 
@@ -121,6 +121,16 @@ function toSafeString(v) {
     if (typeof v.src === 'string') return v.src.trim();
     if (typeof v.uri === 'string') return v.uri.trim();
     return '';
+  }
+  return '';
+}
+
+// 对齐安卓端 firstNonBlankString：从对象按顺序取第一个非空字符串字段
+function firstNonBlank(obj, ...keys) {
+  if (!obj || typeof obj !== 'object') return '';
+  for (const k of keys) {
+    const v = toSafeString(obj[k]);
+    if (v) return v;
   }
   return '';
 }
@@ -203,8 +213,18 @@ async function probeDeveloperId() {
     let nickname = '';
     let avatar = '';
     if (meJson && meJson.data) {
-      nickname = meJson.data.nickname || meJson.data.name || meJson.data.username || '';
-      avatar = normalizeUrl(meJson.data.avatar || meJson.data.avatar_url || '');
+      const d = meJson.data;
+      const u = d.user && typeof d.user === 'object' ? d.user : null;
+      const p = d.profile && typeof d.profile === 'object' ? d.profile : null;
+      nickname = firstNonBlank(d, 'nickname', 'name', 'username')
+        || firstNonBlank(u, 'nickname', 'name', 'username')
+        || firstNonBlank(p, 'nickname', 'name', 'username');
+      // 用户头像字段（对齐安卓端）：avatar > avatar_url > avatarUrl > photo > icon > headimg > head_img
+      avatar = normalizeUrl(
+        firstNonBlank(d, 'avatar', 'avatar_url', 'avatarUrl', 'photo', 'icon', 'headimg', 'head_img')
+        || firstNonBlank(u, 'avatar', 'avatar_url', 'avatarUrl', 'photo', 'icon')
+        || firstNonBlank(p, 'avatar', 'avatar_url', 'avatarUrl', 'photo', 'icon')
+      );
     }
 
     // 2) /api/developer/v1/list
@@ -222,11 +242,8 @@ async function probeDeveloperId() {
       if (listResp.ok) {
         const listJson = await listResp.json();
         if (listJson && listJson.data && Array.isArray(listJson.data.list)) {
-          studios = listJson.data.list.map(it => normalizeStudio({
-            id: it.developer_id || it.developerId || it.id,
-            name: it.name || it.nickname,
-            logo: it.logo || it.avatar || it.icon || it.logo_url,
-          })).filter(Boolean);
+          // 直接把原始对象交给 normalizeStudio，它会按安卓端字段优先级提取 id/name/logo
+          studios = listJson.data.list.map(it => normalizeStudio(it)).filter(Boolean);
 
           // 如果 me 没拿到 ID，从 list 取第一个
           if (!developerId && studios.length > 0) {
