@@ -441,8 +441,6 @@ function upsertAccountFromProbe(result, opts) {
     // 更新已有账号的资料（可能改名/换头像/工作室变动）
     if (nickname) acc.nickname = nickname;
     if (avatar) acc.avatar = avatar;
-    if (developerName) acc.developerName = developerName;
-    if (developerAvatar) acc.developerAvatar = developerAvatar;
     if (Array.isArray(studios)) acc.studios = studios;
     if (!acc.partition) acc.partition = 'persist:taptap-' + developerId;
   }
@@ -462,6 +460,24 @@ function upsertAccountFromProbe(result, opts) {
     accounts.current = acc.id;
     activeDeveloperId = developerId;
     acc.activeDeveloperId = null;
+  }
+
+  // 根据 activeDeveloperId 决定最终写入 acc.developerName / developerAvatar：
+  // - 有 activeDeveloperId 且在 studios 里能找到 → 用选中工作室的 name/logo
+  // - 否则用 probe 探测到的主账号/主工作室信息
+  // 这样 switchStudio 后 reload 不会被 upsert 覆盖回主工作室。
+  if (!isNew && acc.activeDeveloperId && Array.isArray(acc.studios)) {
+    const picked = acc.studios.find(s => s.id === acc.activeDeveloperId);
+    if (picked) {
+      acc.developerName = picked.name || acc.developerName || developerName || '';
+      acc.developerAvatar = picked.logo || acc.developerAvatar || developerAvatar || '';
+    } else {
+      if (developerName) acc.developerName = developerName;
+      if (developerAvatar) acc.developerAvatar = developerAvatar;
+    }
+  } else {
+    if (developerName) acc.developerName = developerName;
+    if (developerAvatar) acc.developerAvatar = developerAvatar;
   }
 
   saveAccounts();
