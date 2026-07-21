@@ -509,28 +509,52 @@ ipcMain.handle('bridge:checkLogin', async () => {
       if (accounts.current) {
         saveAccountCookies(accounts.current);
       }
+      // 返回给前端的 developerId/profile 应该基于 activeDeveloperId（可能是切换后的子工作室）
+      // 而不是 probe 到的主账号 developerId
+      const acc = currentAccount();
+      const effDevId = (acc && acc.activeDeveloperId) ? acc.activeDeveloperId : result.developerId;
+      // 从 studios 列表中找到 activeDeveloperId 对应的工作室，取其 name/logo
+      let effDevName = result.developerName;
+      let effDevAvatar = result.developerAvatar;
+      if (acc && acc.activeDeveloperId && Array.isArray(result.studios)) {
+        const picked = result.studios.find(s => s.id === acc.activeDeveloperId);
+        if (picked) {
+          effDevName = picked.name || effDevName;
+          effDevAvatar = picked.logo || effDevAvatar;
+        }
+      }
       const profile = {
         nickname: result.nickname,
         avatar: result.avatar,
-        developerName: result.developerName,
-        developerAvatar: result.developerAvatar,
+        developerName: effDevName,
+        developerAvatar: effDevAvatar,
       };
-      return { status: 'ready', developerId: result.developerId, error: null, profile, studios: result.studios };
+      return { status: 'ready', developerId: effDevId, error: null, profile, studios: result.studios };
     }
 
     // API 探测失败但有本地账号 → identity-unresolved
     if (accounts.current) {
       const acc = currentAccount();
       if (acc) {
+        const effDevId = acc.activeDeveloperId || acc.developerId;
+        let effDevName = acc.developerName || acc.name;
+        let effDevAvatar = acc.developerAvatar || acc.avatar;
+        if (acc.activeDeveloperId && Array.isArray(acc.studios)) {
+          const picked = acc.studios.find(s => s.id === acc.activeDeveloperId);
+          if (picked) {
+            effDevName = picked.name || effDevName;
+            effDevAvatar = picked.logo || effDevAvatar;
+          }
+        }
         return {
           status: 'identity-unresolved',
-          developerId: acc.developerId,
+          developerId: effDevId,
           error: 'Cannot resolve developer ID from API',
           profile: {
             nickname: acc.nickname || acc.name,
             avatar: acc.avatar,
-            developerName: acc.developerName || acc.name,
-            developerAvatar: acc.developerAvatar || acc.avatar,
+            developerName: effDevName,
+            developerAvatar: effDevAvatar,
           },
           studios: acc.studios || [],
         };
