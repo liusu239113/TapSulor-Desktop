@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.2';
-const VERSION_CODE = 3;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.3';
+const VERSION_CODE = 4;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
 const UPDATE_UA = `TapSulor/${APP_VERSION} (Windows)`;
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -102,22 +102,37 @@ function currentAccount() {
  * 兼容旧格式 { developerId, name, avatar } 和原始 API 字段
  */
 function normalizeStudio(s) {
-  if (!s) return null;
+  if (!s || typeof s !== 'object') return null;
   const id = String(s.id || s.developerId || s.developer_id || '').trim();
   if (!id) return null;
-  const name = s.name || s.nickname || ('开发者 ' + id.slice(-4));
+  const name = toSafeString(s.name || s.nickname) || ('开发者 ' + id.slice(-4));
   // logo 字段优先级：logo > avatar > icon > logo_url > avatar_url
   const logo = s.logo || s.avatar || s.icon || s.logo_url || s.avatar_url || '';
   return { id, name, logo: normalizeUrl(logo) };
 }
 
+function toSafeString(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  // 对象/数组/其他类型 → 尝试取常用字段，失败返回空串
+  if (typeof v === 'object') {
+    if (typeof v.url === 'string') return v.url.trim();
+    if (typeof v.src === 'string') return v.src.trim();
+    if (typeof v.uri === 'string') return v.uri.trim();
+    return '';
+  }
+  return '';
+}
+
 function normalizeUrl(u) {
-  if (!u) return '';
-  if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:')) return u;
+  const s = toSafeString(u);
+  if (!s) return '';
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:')) return s;
   // 以 // 开头补 https
-  if (u.startsWith('//')) return 'https:' + u;
+  if (s.startsWith('//')) return 'https:' + s;
   // 相对路径直接返回
-  return u;
+  return s;
 }
 
 function genAccId() {
