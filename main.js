@@ -87,7 +87,8 @@ function loadAccounts() {
 function resolveActiveDeveloperId() {
   if (!accounts.current) return null;
   const acc = accounts.accounts.find(a => a.id === accounts.current);
-  return acc ? acc.developerId : null;
+  // 对齐安卓端：优先用 activeDeveloperId（切换工作室后的值），否则用账号原始 developerId
+  return acc ? (acc.activeDeveloperId || acc.developerId) : null;
 }
 
 function saveAccounts() { writeJSON(ACCOUNTS_FILE, accounts); }
@@ -359,9 +360,12 @@ function upsertAccountFromProbe(result, opts) {
   if (setActive) {
     accounts.current = acc.id;
     activeDeveloperId = developerId;
+    // 重新登录时重置工作室选择，避免残留之前的切换状态
+    acc.activeDeveloperId = null;
   } else if (!accounts.current) {
     accounts.current = acc.id;
     activeDeveloperId = developerId;
+    acc.activeDeveloperId = null;
   }
 
   saveAccounts();
@@ -461,6 +465,14 @@ ipcMain.handle('bridge:switchStudio', (event, developerId) => {
     activeDeveloperId = sid;
   } else {
     activeDeveloperId = sid; // 兜底
+  }
+  // 持久化到账号对象，reload 后仍保持切换状态（对齐安卓 AccountManager）
+  acc.activeDeveloperId = activeDeveloperId;
+  // 同步更新 developerName/developerAvatar 为选中工作室的信息
+  const picked = acc.studios && acc.studios.find(s => s.id === sid);
+  if (picked) {
+    acc.developerName = picked.name;
+    acc.developerAvatar = picked.logo;
   }
   saveAccounts();
   // 切换后重载页面，让前端重新拉取新工作室的游戏列表和收入（与登录成功行为一致）
@@ -745,7 +757,7 @@ ipcMain.handle('bridge:switchAccount', (event, id) => {
     return { ok: true };
   }
   accounts.current = acc.id;
-  activeDeveloperId = acc.developerId;
+  activeDeveloperId = acc.activeDeveloperId || acc.developerId;
   saveAccounts();
   if (mainWindow) {
     mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: false, switched: true, developerId: acc.developerId });
@@ -773,7 +785,7 @@ ipcMain.handle('bridge:addAccount', (event, data) => {
     accounts.accounts.push(acc);
     if (!accounts.current) {
       accounts.current = acc.id;
-      activeDeveloperId = acc.developerId;
+      activeDeveloperId = acc.activeDeveloperId || acc.developerId;
     }
     saveAccounts();
   }
@@ -787,7 +799,7 @@ ipcMain.handle('bridge:removeAccount', (event, id) => {
   if (accounts.current === removed.id) {
     if (accounts.accounts.length > 0) {
       accounts.current = accounts.accounts[0].id;
-      activeDeveloperId = accounts.accounts[0].developerId;
+      activeDeveloperId = accounts.accounts[0].activeDeveloperId || accounts.accounts[0].developerId;
     } else {
       accounts.current = null;
       activeDeveloperId = null;
