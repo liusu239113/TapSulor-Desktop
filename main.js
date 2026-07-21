@@ -104,7 +104,8 @@ function currentAccount() {
  */
 function normalizeStudio(s) {
   if (!s || typeof s !== 'object') return null;
-  const id = String(s.id || s.developerId || s.developer_id || '').trim();
+  // id 字段优先级（对齐安卓端 extractDeveloperIdFromItem）：developer_id > developerId > id
+  const id = String(s.developer_id || s.developerId || s.id || '').trim();
   if (!id) return null;
   const name = toSafeString(s.name || s.nickname) || ('开发者 ' + id.slice(-4));
   // logo 字段优先级（对齐安卓端）：logo > developer_logo > developerLogo > avatar > icon > avatar_url > logo_url
@@ -359,9 +360,14 @@ function upsertAccountFromProbe(result, opts) {
   // 非 add 模式：设为当前账号
   if (setActive) {
     accounts.current = acc.id;
-    activeDeveloperId = developerId;
-    // 重新登录时重置工作室选择，避免残留之前的切换状态
-    acc.activeDeveloperId = null;
+    // 已有账号且有 activeDeveloperId → 保留用户的工作室选择（reload 后不重置）
+    // 新账号或无 activeDeveloperId → 默认用登录探测到的 developerId
+    if (!isNew && acc.activeDeveloperId) {
+      activeDeveloperId = acc.activeDeveloperId;
+    } else {
+      activeDeveloperId = developerId;
+      acc.activeDeveloperId = null;
+    }
   } else if (!accounts.current) {
     accounts.current = acc.id;
     activeDeveloperId = developerId;
