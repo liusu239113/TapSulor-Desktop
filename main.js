@@ -463,7 +463,8 @@ ipcMain.handle('bridge:switchStudio', (event, developerId) => {
     activeDeveloperId = sid; // 兜底
   }
   saveAccounts();
-  if (mainWindow) mainWindow.webContents.send('studio-switched', activeDeveloperId);
+  // 切换后重载页面，让前端重新拉取新工作室的游戏列表和收入（与登录成功行为一致）
+  if (mainWindow) mainWindow.webContents.reload();
   return true;
 });
 
