@@ -151,6 +151,96 @@ function genAccId() {
   return 'acc-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
 }
 
+// ====== 每个账号独立的 Cookie 存储（对齐 Android AccountManager.kt cookieStore） ======
+// Electron 所有窗口共享 session.defaultSession，多账号切换时需要手动保存/恢复 cookie。
+// 切换账号流程：saveAccountCookies(当前) → clearTaptapCookies() → restoreAccountCookies(目标) → reload
+
+const TAPTAP_COOKIE_ORIGINS = [
+  'https://developer.taptap.cn',
+  'https://passport.taptap.cn',
+  'https://www.taptap.cn',
+  'https://www.taptap.com',
+  'https://taptap.cn',
+  'https://taptap.com',
+];
+
+/**
+ * 将当前 defaultSession 中 TapTap 相关 cookie 保存到指定账号对象
+ */
+async function saveAccountCookies(accountId) {
+  const acc = accounts.accounts.find(a => a.id === accountId);
+  if (!acc) return;
+  try {
+    const allCookies = await session.defaultSession.cookies.get({});
+    const taptapCookies = allCookies
+      .filter(c => c.domain && c.domain.includes('taptap'))
+      .map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || '/',
+        secure: !!c.secure,
+        httpOnly: !!c.httpOnly,
+        sameSite: c.sameSite || 'unspecified',
+        expirationDate: c.expirationDate > 0 ? c.expirationDate : undefined,
+      }));
+    acc.cookies = taptapCookies;
+    saveAccounts();
+  } catch (err) {
+    console.error('[cookie] saveAccountCookies error:', err.message);
+  }
+}
+
+/**
+ * 清除 defaultSession 中所有 TapTap cookie
+ */
+async function clearTaptapCookies() {
+  try {
+    await session.defaultSession.clearStorageData({
+      storages: ['cookies'],
+      origins: TAPTAP_COOKIE_ORIGINS,
+    });
+  } catch (err) {
+    console.error('[cookie] clearTaptapCookies error:', err.message);
+  }
+}
+
+/**
+ * 将指定账号保存的 cookie 恢复到 defaultSession
+ */
+async function restoreAccountCookies(accountId) {
+  const acc = accounts.accounts.find(a => a.id === accountId);
+  if (!acc || !Array.isArray(acc.cookies) || acc.cookies.length === 0) return;
+  try {
+    for (const c of acc.cookies) {
+      const hostname = c.domain.replace(/^\./, '');
+      const protocol = c.secure ? 'https' : 'http';
+      const url = `${protocol}://${hostname}${c.path || '/'}`;
+      const details = {
+        url,
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || '/',
+        secure: !!c.secure,
+        httpOnly: !!c.httpOnly,
+        sameSite: c.sameSite || 'unspecified',
+      };
+      if (c.expirationDate && c.expirationDate > 0) {
+        details.expirationDate = c.expirationDate;
+      }
+      try {
+        await session.defaultSession.cookies.set(details);
+      } catch (setErr) {
+        // 单个 cookie 失败不影响其他
+        console.warn('[cookie] restore cookie', c.name, 'error:', setErr.message);
+      }
+    }
+  } catch (err) {
+    console.error('[cookie] restoreAccountCookies error:', err.message);
+  }
+}
+
 // ====== 偏好设置 ======
 let preferences = readJSON(PREFS_FILE, { theme_mode: 'light', theme_accent: 'cyan', font_family: 'default' });
 
@@ -415,6 +505,10 @@ ipcMain.handle('bridge:checkLogin', async () => {
 
     if (result) {
       upsertAccountFromProbe(result, { mode: 'login' });
+      // 首次启动/重载后，将当前 cookie 保存到账号对象（确保后续切换账号时有 cookie 可恢复）
+      if (accounts.current) {
+        saveAccountCookies(accounts.current);
+      }
       const profile = {
         nickname: result.nickname,
         avatar: result.avatar,
@@ -628,6 +722,8 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     let resolved = false;
     let nativeCheckAttempts = 0;
     const MAX_NATIVE_ATTEMPTS = 12;
+    // add 模式下记录原来的当前账号，登录新账号后恢复其 cookie
+    const prevAccountId = (mode === 'add') ? accounts.current : null;
 
     const finish = (result) => {
       if (resolved) return;
@@ -652,6 +748,12 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       }
 
       const finalAcc = accounts.accounts.find(a => a.developerId === String(developerId));
+
+      // 保存刚登录成功的账号 cookie（此时 defaultSession 里是新账号的 cookie）
+      if (finalAcc) {
+        await saveAccountCookies(finalAcc.id);
+      }
+
       if (mainWindow) {
         mainWindow.webContents.send('login-success');
         mainWindow.webContents.send('account-updated', {
@@ -663,6 +765,12 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
         if (mode !== 'add') {
           activeDeveloperId = String(developerId);
           mainWindow.webContents.reload();
+        } else {
+          // add 模式：登录完新账号后，恢复之前账号的 cookie，让主窗口继续用原账号身份工作
+          if (prevAccountId) {
+            await clearTaptapCookies();
+            await restoreAccountCookies(prevAccountId);
+          }
         }
       }
       finish({ success: true, developerId: String(developerId) });
@@ -726,8 +834,13 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       } catch {}
     });
 
-    loginWindow.on('closed', () => {
+    loginWindow.on('closed', async () => {
       loginWindow = null;
+      // add 模式下取消登录（关闭窗口）：恢复之前账号的 cookie
+      if (!resolved && mode === 'add' && prevAccountId) {
+        await clearTaptapCookies();
+        await restoreAccountCookies(prevAccountId);
+      }
       if (!resolved) finish({ success: false, reason: 'closed' });
     });
 
@@ -736,10 +849,15 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     };
 
     if (mode === 'add') {
-      session.defaultSession.clearStorageData({
-        storages: ['cookies'],
-        origins: ['https://developer.taptap.cn', 'https://passport.taptap.cn', 'https://www.taptap.cn', 'https://www.taptap.com'],
-      }).then(startLogin).catch(startLogin);
+      // add 模式：先保存当前账号 cookie，再清除，让登录窗口从零开始登录新账号
+      const prepAdd = async () => {
+        if (prevAccountId) {
+          await saveAccountCookies(prevAccountId);
+        }
+        await clearTaptapCookies();
+        startLogin();
+      };
+      prepAdd().catch(startLogin);
     } else {
       startLogin();
     }
@@ -751,7 +869,7 @@ ipcMain.handle('bridge:getAccounts', () => {
   return { current: accounts.current, accounts: accounts.accounts };
 });
 
-ipcMain.handle('bridge:switchAccount', (event, id) => {
+ipcMain.handle('bridge:switchAccount', async (event, id) => {
   const acc = accounts.accounts.find(a => a.id === id);
   if (!acc) {
     if (mainWindow) mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: false, switched: false, developerId: null });
@@ -762,12 +880,25 @@ ipcMain.handle('bridge:switchAccount', (event, id) => {
     if (mainWindow) mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: true, switched: false, developerId: acc.developerId });
     return { ok: true };
   }
+
+  // 1. 先保存当前账号的 cookie（对齐 Android AccountManager.switchAccount 保存旧账号 cookie）
+  const prevId = accounts.current;
+  if (prevId) {
+    await saveAccountCookies(prevId);
+  }
+  // 2. 清除当前 session cookie
+  await clearTaptapCookies();
+  // 3. 恢复目标账号的 cookie
+  await restoreAccountCookies(acc.id);
+
+  // 4. 切换账号状态
   accounts.current = acc.id;
   activeDeveloperId = acc.activeDeveloperId || acc.developerId;
   saveAccounts();
+
   if (mainWindow) {
     mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: false, switched: true, developerId: acc.developerId });
-    // 切换账号后刷新页面（拉取该账号最新数据）
+    // 5. 刷新页面（用目标账号的 cookie 拉取数据）
     mainWindow.webContents.reload();
   }
   return { ok: true };
