@@ -1,9 +1,12 @@
-const { app, BrowserWindow, ipcMain, session, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// ====== 常量 ======
-const APP_VERSION = '1.0.1';
+// ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
+const APP_VERSION = '1.0.2';
+const VERSION_CODE = 3;                 // 整数，服务器 version_code > 此值视为有更新
+const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
+const UPDATE_UA = `TapSulor/${APP_VERSION} (Windows)`;
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const TAPTAP_REFERER = 'https://developer.taptap.cn/';
 const TAPTAP_ORIGIN = 'https://developer.taptap.cn';
@@ -26,18 +29,106 @@ function writeJSON(file, data) {
 }
 
 // ====== 账号管理 ======
-let accounts = readJSON(ACCOUNTS_FILE, { list: [], activeId: null });
+// 规范格式（对齐 Android assets/account-state.js）：
+// {
+//   current: 'acc-{timestamp}',
+//   accounts: [{
+//     id, name, developerId, developerName, developerAvatar,
+//     nickname, avatar, partition, studios: [{ id, name, logo }]
+//   }]
+// }
+let accounts = loadAccounts();
+/** 当前激活的工作室 developerId（可通过工作室切换改变，默认等于当前账号的 developerId） */
+let activeDeveloperId = resolveActiveDeveloperId();
+
+function loadAccounts() {
+  const raw = readJSON(ACCOUNTS_FILE, null);
+  // 旧格式迁移：{ list:[{id, developerId, name, avatar, studios}], activeId }
+  if (raw && Array.isArray(raw.list)) {
+    const migrated = { current: null, accounts: [] };
+    for (const it of raw.list) {
+      const devId = it.developerId || it.id;
+      if (!devId) continue;
+      migrated.accounts.push({
+        id: 'acc-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+        name: it.name || '',
+        developerId: String(devId),
+        developerName: it.name || '',
+        developerAvatar: it.avatar || '',
+        nickname: it.name || '',
+        avatar: it.avatar || '',
+        partition: 'persist:taptap-' + devId,
+        studios: Array.isArray(it.studios) ? it.studios.map(normalizeStudio).filter(Boolean) : [],
+      });
+    }
+    if (raw.activeId) {
+      const cur = migrated.accounts.find(a => a.developerId === String(raw.activeId));
+      migrated.current = cur ? cur.id : (migrated.accounts[0] ? migrated.accounts[0].id : null);
+    } else if (migrated.accounts.length > 0) {
+      migrated.current = migrated.accounts[0].id;
+    }
+    writeJSON(ACCOUNTS_FILE, migrated);
+    return migrated;
+  }
+  // 新格式默认
+  if (raw && Array.isArray(raw.accounts)) {
+    // 防御：补全缺失字段
+    for (const a of raw.accounts) {
+      if (!a.id) a.id = 'acc-' + Date.now();
+      if (!a.partition) a.partition = 'persist:taptap-' + (a.developerId || '');
+      if (!Array.isArray(a.studios)) a.studios = [];
+      a.studios = a.studios.map(normalizeStudio).filter(Boolean);
+    }
+    return raw;
+  }
+  return { current: null, accounts: [] };
+}
+
+function resolveActiveDeveloperId() {
+  if (!accounts.current) return null;
+  const acc = accounts.accounts.find(a => a.id === accounts.current);
+  return acc ? acc.developerId : null;
+}
 
 function saveAccounts() { writeJSON(ACCOUNTS_FILE, accounts); }
+
+function currentAccount() {
+  if (!accounts.current) return null;
+  return accounts.accounts.find(a => a.id === accounts.current) || null;
+}
+
+/**
+ * 规范化工作室对象 → { id, name, logo }
+ * 兼容旧格式 { developerId, name, avatar } 和原始 API 字段
+ */
+function normalizeStudio(s) {
+  if (!s) return null;
+  const id = String(s.id || s.developerId || s.developer_id || '').trim();
+  if (!id) return null;
+  const name = s.name || s.nickname || ('开发者 ' + id.slice(-4));
+  // logo 字段优先级：logo > avatar > icon > logo_url > avatar_url
+  const logo = s.logo || s.avatar || s.icon || s.logo_url || s.avatar_url || '';
+  return { id, name, logo: normalizeUrl(logo) };
+}
+
+function normalizeUrl(u) {
+  if (!u) return '';
+  if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:')) return u;
+  // 以 // 开头补 https
+  if (u.startsWith('//')) return 'https:' + u;
+  // 相对路径直接返回
+  return u;
+}
+
+function genAccId() {
+  return 'acc-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+}
 
 // ====== 偏好设置 ======
 let preferences = readJSON(PREFS_FILE, { theme_mode: 'light', theme_accent: 'cyan', font_family: 'default' });
 
 // ====== 开发者 ID 提取工具（对齐 Android LoginActivity.kt） ======
 
-/**
- * 规范化开发者 ID：只保留纯数字，处理数字类型的 ".0" 后缀
- */
 function normDeveloperId(v) {
   if (v == null) return null;
   let s = String(v).trim();
@@ -46,10 +137,6 @@ function normDeveloperId(v) {
   return /^\d+$/.test(s) ? s : null;
 }
 
-/**
- * 从 /api/user/v1/me 响应中提取开发者 ID
- * 字段优先级: data.developer_id > data.developerId > data.developer.id
- */
 function extractMeId(json) {
   try {
     const data = json && json.data;
@@ -60,27 +147,6 @@ function extractMeId(json) {
   } catch { return null; }
 }
 
-/**
- * 从 /api/developer/v1/list 响应中提取第一个开发者 ID
- * 遍历 data.list[]，字段优先级: developer_id > developerId > id
- */
-function extractListId(json) {
-  try {
-    const list = json && json.data && json.data.list;
-    if (!Array.isArray(list)) return null;
-    for (const it of list) {
-      const id = normDeveloperId(it.developer_id)
-              || normDeveloperId(it.developerId)
-              || normDeveloperId(it.id);
-      if (id) return id;
-    }
-    return null;
-  } catch { return null; }
-}
-
-/**
- * 从 URL 中提取开发者 ID（对齐 Android 的 extractDeveloperIdFromUrl）
- */
 function extractDeveloperIdFromUrl(url) {
   if (!url) return null;
   let m = url.match(/\/(?:v3|developer|developer-center)\/(\d+)(?:\/|$)/);
@@ -90,13 +156,12 @@ function extractDeveloperIdFromUrl(url) {
 }
 
 /**
- * 使用当前 session 的 cookie 探测开发者 ID
- * 对齐 Android 的 probeDeveloperIdFromWebView()
- * 返回 { developerId, profile, studios } 或 null
+ * 探测当前登录态的开发者信息
+ * 返回 { developerId, nickname, avatar, developerName, developerAvatar, studios } 或 null
  */
 async function probeDeveloperId() {
   try {
-    // 1) 先调 /api/user/v1/me
+    // 1) /api/user/v1/me
     let meResp;
     try {
       meResp = await net.fetch(`${TAPTAP_ORIGIN}/api/user/v1/me`, {
@@ -122,15 +187,15 @@ async function probeDeveloperId() {
     let developerId = meJson ? extractMeId(meJson) : null;
     let nickname = '';
     let avatar = '';
-
-    // 从 me 响应中提取用户基本信息
     if (meJson && meJson.data) {
       nickname = meJson.data.nickname || meJson.data.name || meJson.data.username || '';
-      avatar = meJson.data.avatar || meJson.data.avatar_url || '';
+      avatar = normalizeUrl(meJson.data.avatar || meJson.data.avatar_url || '');
     }
 
-    // 2) 再调 /api/developer/v1/list 获取工作室列表
+    // 2) /api/developer/v1/list
     let studios = [];
+    let developerName = nickname;
+    let developerAvatar = avatar;
     try {
       const listResp = await net.fetch(`${TAPTAP_ORIGIN}/api/developer/v1/list`, {
         headers: {
@@ -142,35 +207,36 @@ async function probeDeveloperId() {
       if (listResp.ok) {
         const listJson = await listResp.json();
         if (listJson && listJson.data && Array.isArray(listJson.data.list)) {
-          studios = listJson.data.list.map(it => ({
-            developerId: normDeveloperId(it.developer_id) || normDeveloperId(it.developerId) || normDeveloperId(it.id) || '',
-            name: it.name || it.nickname || ('开发者 ' + (normDeveloperId(it.id) || '').slice(-4)),
-            avatar: it.avatar || '',
-            type: it.type || 0,
-            verified: it.verified === true || it.verified === 1,
-          })).filter(s => s.developerId);
+          studios = listJson.data.list.map(it => normalizeStudio({
+            id: it.developer_id || it.developerId || it.id,
+            name: it.name || it.nickname,
+            logo: it.logo || it.avatar || it.icon || it.logo_url,
+          })).filter(Boolean);
 
           // 如果 me 没拿到 ID，从 list 取第一个
           if (!developerId && studios.length > 0) {
-            developerId = studios[0].developerId;
+            developerId = studios[0].id;
+          }
+          // 找到当前 developerId 对应的工作室，用它的 name/logo 作为 developerName/developerAvatar
+          if (developerId) {
+            const active = studios.find(s => s.id === developerId);
+            if (active) {
+              developerName = active.name || developerName;
+              developerAvatar = active.logo || developerAvatar;
+            } else if (studios.length > 0) {
+              developerName = studios[0].name || developerName;
+              developerAvatar = studios[0].logo || developerAvatar;
+            }
           }
         }
       }
     } catch {
-      // list 失败不致命，可能只是没有多工作室
+      // list 失败不致命
     }
 
     if (!developerId) return null;
 
-    // 构建 profile
-    const profile = {
-      nickname,
-      avatar,
-      developerName: nickname,
-      developerAvatar: avatar,
-    };
-
-    return { developerId, profile, studios };
+    return { developerId, nickname, avatar, developerName, developerAvatar, studios };
   } catch (err) {
     console.error('probeDeveloperId error:', err);
     return null;
@@ -198,16 +264,12 @@ function createWindow() {
     backgroundColor: '#1a1a2e',
   });
 
-  // 设置 UA（移除 Electron 标识，使用桌面 Chrome UA）
   mainWindow.webContents.setUserAgent(DESKTOP_UA);
 
-  // 启用第三方 cookie（QQ/微信 OAuth 需要）
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    // 默认允许 cookie 等权限
     callback(true);
   });
 
-  // 拦截请求，添加 Referer 防盗链 + UA
   const filter = { urls: ['*://*.taptap.cn/*', '*://*.taptap.com/*'] };
   session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     details.requestHeaders['Referer'] = TAPTAP_REFERER;
@@ -215,7 +277,6 @@ function createWindow() {
     callback({ requestHeaders: details.requestHeaders });
   });
 
-  // 处理外部链接 - 在系统浏览器打开
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       shell.openExternal(url);
@@ -230,9 +291,53 @@ function createWindow() {
   });
 }
 
+// ====== 账号更新辅助 ======
+// 将 probe 结果写入账号存储，返回 { isNew, switched, acc }
+function upsertAccountFromProbe(result, opts) {
+  const { developerId, nickname, avatar, developerName, developerAvatar, studios } = result;
+  const modeAdd = opts && opts.mode === 'add';
+  const setActive = !modeAdd;
+
+  let acc = accounts.accounts.find(a => a.developerId === developerId);
+  const isNew = !acc;
+  if (isNew) {
+    acc = {
+      id: genAccId(),
+      name: nickname || developerName || ('开发者 ' + developerId.slice(-4)),
+      developerId,
+      developerName: developerName || '',
+      developerAvatar: developerAvatar || '',
+      nickname: nickname || '',
+      avatar: avatar || '',
+      partition: 'persist:taptap-' + developerId,
+      studios: studios || [],
+    };
+    accounts.accounts.push(acc);
+  } else {
+    // 更新已有账号的资料（可能改名/换头像/工作室变动）
+    if (nickname) acc.nickname = nickname;
+    if (avatar) acc.avatar = avatar;
+    if (developerName) acc.developerName = developerName;
+    if (developerAvatar) acc.developerAvatar = developerAvatar;
+    if (Array.isArray(studios)) acc.studios = studios;
+    if (!acc.partition) acc.partition = 'persist:taptap-' + developerId;
+  }
+
+  // 非 add 模式：设为当前账号
+  if (setActive) {
+    accounts.current = acc.id;
+    activeDeveloperId = developerId;
+  } else if (!accounts.current) {
+    accounts.current = acc.id;
+    activeDeveloperId = developerId;
+  }
+
+  saveAccounts();
+  return { isNew, acc };
+}
+
 // ====== IPC 处理 ======
 
-// fetch 桥接 - 用 Electron net 模块发请求（自动带 session cookies）
 ipcMain.handle('bridge:fetch', async (event, url) => {
   try {
     const response = await net.fetch(url, {
@@ -250,11 +355,9 @@ ipcMain.handle('bridge:fetch', async (event, url) => {
   }
 });
 
-// 检查登录状态 - 对齐 Android account-state.js 逻辑
-// 返回 status 字段: 'ready' | 'unauthenticated' | 'identity-unresolved' | 'error'
+// 检查登录状态
 ipcMain.handle('bridge:checkLogin', async () => {
   try {
-    // 检查 session 中是否有 TapTap cookie
     const cookies = await session.defaultSession.cookies.get({ domain: '.taptap.cn' });
     const hasSession = cookies.some(c =>
       (c.name === 'sessionid' || c.name === 'taptap_session' || c.name === 'sid'
@@ -262,95 +365,163 @@ ipcMain.handle('bridge:checkLogin', async () => {
     );
 
     // 无 cookie 且无本地账号 → 未登录
-    if (!hasSession && !accounts.activeId) {
+    if (!hasSession && !accounts.current) {
       return { status: 'unauthenticated', developerId: null, error: null, profile: null, studios: [] };
     }
 
-    // 使用正确的 API 端点探测开发者 ID
     const result = await probeDeveloperId();
 
     if (result) {
-      const { developerId, profile, studios } = result;
-
-      // 更新账号信息
-      const idx = accounts.list.findIndex(a => a.developerId === developerId);
-      if (idx >= 0) {
-        if (profile.nickname) accounts.list[idx].name = profile.nickname;
-        if (profile.avatar) accounts.list[idx].avatar = profile.avatar;
-        accounts.list[idx].studios = studios;
-      } else {
-        accounts.list.push({
-          id: developerId,
-          developerId,
-          name: profile.nickname || ('开发者 ' + developerId.slice(-4)),
-          avatar: profile.avatar,
-          studios,
-        });
-      }
-      accounts.activeId = developerId;
-      saveAccounts();
-
-      return { status: 'ready', developerId, error: null, profile, studios };
+      upsertAccountFromProbe(result, { mode: 'login' });
+      const profile = {
+        nickname: result.nickname,
+        avatar: result.avatar,
+        developerName: result.developerName,
+        developerAvatar: result.developerAvatar,
+      };
+      return { status: 'ready', developerId: result.developerId, error: null, profile, studios: result.studios };
     }
 
     // API 探测失败但有本地账号 → identity-unresolved
-    if (accounts.activeId) {
-      const acc = accounts.list.find(a => a.developerId === accounts.activeId);
-      return {
-        status: 'identity-unresolved',
-        developerId: accounts.activeId,
-        error: 'Cannot resolve developer ID from API',
-        profile: acc ? { nickname: acc.name, avatar: acc.avatar, developerName: acc.name, developerAvatar: acc.avatar } : null,
-        studios: acc ? (acc.studios || []) : [],
-      };
+    if (accounts.current) {
+      const acc = currentAccount();
+      if (acc) {
+        return {
+          status: 'identity-unresolved',
+          developerId: acc.developerId,
+          error: 'Cannot resolve developer ID from API',
+          profile: {
+            nickname: acc.nickname || acc.name,
+            avatar: acc.avatar,
+            developerName: acc.developerName || acc.name,
+            developerAvatar: acc.developerAvatar || acc.avatar,
+          },
+          studios: acc.studios || [],
+        };
+      }
     }
 
-    // 有 cookie 但无法获取开发者 ID
     return { status: 'unauthenticated', developerId: null, error: null, profile: null, studios: [] };
   } catch (err) {
     return { status: 'error', developerId: null, error: err.message, profile: null, studios: [] };
   }
 });
 
-// 同步获取版本号
 ipcMain.on('bridge:getAppVersion', (event) => {
   event.returnValue = APP_VERSION;
 });
 
-ipcMain.handle('bridge:getDeveloperId', () => accounts.activeId);
+ipcMain.handle('bridge:getDeveloperId', () => activeDeveloperId);
+
+ipcMain.handle('bridge:getActiveDeveloperId', () => activeDeveloperId);
 
 ipcMain.handle('bridge:getStudios', () => {
-  const acc = accounts.list.find(a => a.developerId === accounts.activeId);
+  const acc = currentAccount();
   return acc ? (acc.studios || []) : [];
 });
 
-ipcMain.handle('bridge:getActiveDeveloperId', () => accounts.activeId);
-
 ipcMain.handle('bridge:switchStudio', (event, developerId) => {
-  accounts.activeId = developerId;
+  const acc = currentAccount();
+  if (!acc) return false;
+  const sid = String(developerId);
+  // 只允许在当前账号的工作室列表里切
+  if (acc.studios && acc.studios.some(s => s.id === sid)) {
+    activeDeveloperId = sid;
+  } else {
+    activeDeveloperId = sid; // 兜底
+  }
   saveAccounts();
-  if (mainWindow) mainWindow.webContents.send('studio-switched', developerId);
+  if (mainWindow) mainWindow.webContents.send('studio-switched', activeDeveloperId);
   return true;
 });
 
-// 检查更新（访问 GitHub releases）
-ipcMain.handle('bridge:checkUpdate', async () => {
+// ====== 更新检查（对齐 Android UpdateChecker.kt） ======
+async function fetchUpdateInfo() {
   try {
-    const response = await net.fetch('https://api.github.com/repos/liusu239113/TapSulor-Desktop/releases/latest', {
-      headers: { 'User-Agent': DESKTOP_UA, 'Accept': 'application/vnd.github.v3+json' },
+    const response = await net.fetch(UPDATE_URL, {
+      headers: { 'User-Agent': UPDATE_UA, 'Accept': 'application/json' },
     });
-    if (response.ok) {
-      const data = await response.json();
-      const latest = data.tag_name || data.name || '';
-      if (latest && latest !== `v${APP_VERSION}` && latest !== APP_VERSION) {
-        return { hasUpdate: true, version: latest, url: data.html_url, notes: data.body || '' };
-      }
-      return { hasUpdate: false };
-    }
-    return { hasUpdate: false };
-  } catch {
-    return { hasUpdate: false };
+    if (!response.ok) return null;
+    const json = await response.json();
+    return json || null;
+  } catch (err) {
+    console.error('[update] fetch error:', err.message);
+    return null;
   }
+}
+
+function pickDownloadUrl(info) {
+  if (!info) return null;
+  // 优先 Windows 专用链接
+  return info.win_url || info.exe_url || info.installer_url
+      || info.download_page || info.apk_url || null;
+}
+
+async function showUpdateDialog(info, silent) {
+  if (!info || !mainWindow) return;
+  const serverCode = parseInt(info.version_code, 10);
+  if (!Number.isFinite(serverCode) || serverCode <= VERSION_CODE) return;
+
+  const force = info.force_update === true || info.force_update === 1;
+  const versionName = info.latest_version || info.version_name || '';
+  const notes = info.update_notes || info.notes || '';
+  const publishedAt = info.published_at || '';
+  const downloadUrl = pickDownloadUrl(info);
+
+  const title = force ? '发现重要更新' : '发现新版本';
+  let message = `当前版本 ${APP_VERSION}（build ${VERSION_CODE}）\n最新版本 ${versionName}（build ${serverCode}）`;
+  if (publishedAt) message += `\n发布于 ${publishedAt}`;
+  if (notes) message += `\n\n更新内容：\n${notes}`;
+
+  const buttons = force ? ['立即更新'] : ['立即更新', '稍后'];
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: force ? 'warning' : 'info',
+    title,
+    message: title,
+    detail: message,
+    buttons,
+    defaultId: 0,
+    cancelId: force ? 0 : 1,
+    noLink: true,
+  });
+
+  if (response === 0 && downloadUrl) {
+    shell.openExternal(downloadUrl);
+  }
+}
+
+// 静默检查：启动 3s 后调用，只在有更新且非强制时不打扰用户（有更新就弹窗）
+async function silentUpdateCheck() {
+  const info = await fetchUpdateInfo();
+  if (info && parseInt(info.version_code, 10) > VERSION_CODE) {
+    showUpdateDialog(info, true);
+  }
+}
+
+ipcMain.handle('bridge:checkUpdate', async () => {
+  // 手动检查：拿不到信息、无更新都给提示
+  const info = await fetchUpdateInfo();
+  if (!info) {
+    if (mainWindow) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'error', title: '检查更新失败', message: '无法连接到更新服务器，请稍后再试。',
+        buttons: ['确定'], noLink: true,
+      });
+    }
+    return;
+  }
+  const serverCode = parseInt(info.version_code, 10);
+  if (!Number.isFinite(serverCode) || serverCode <= VERSION_CODE) {
+    if (mainWindow) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info', title: '已是最新版本',
+        message: `当前版本 ${APP_VERSION}（build ${VERSION_CODE}）已是最新。`,
+        buttons: ['确定'], noLink: true,
+      });
+    }
+    return;
+  }
+  await showUpdateDialog(info, false);
 });
 
 // 同步偏好设置
@@ -361,8 +532,7 @@ ipcMain.handle('bridge:syncPreferences', (event, mode, accent, font) => {
   writeJSON(PREFS_FILE, preferences);
 });
 
-// 打开登录窗口（对齐 Android LoginActivity.kt）
-// mode: 'add' = 添加新账号（先清 cookie）; 其他/undefined = 登录
+// 打开登录窗口
 ipcMain.handle('bridge:openLogin', (event, mode) => {
   return new Promise((resolve) => {
     if (loginWindow) {
@@ -387,7 +557,6 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     const winContents = loginWindow.webContents;
     winContents.setUserAgent(DESKTOP_UA);
 
-    // 拦截原生 scheme（weixin://, mqqapi:// 等）→ 系统浏览器
     winContents.setWindowOpenHandler(({ url }) => {
       try {
         const u = new URL(url);
@@ -397,7 +566,6 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
         }
       } catch {}
       if (url.startsWith('http://') || url.startsWith('https://')) {
-        // 外部链接在系统浏览器打开（避免跳出 TapTap 域名）
         if (!url.includes('taptap.cn') && !url.includes('taptap.com')) {
           shell.openExternal(url);
           return { action: 'deny' };
@@ -415,46 +583,40 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       resolved = true;
       if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
       resolve(result);
+      if (mainWindow) mainWindow.webContents.send('login-check');
     };
 
-    // 将探测到的开发者 ID 保存并结束登录流程
     const saveAndFinish = async (developerId) => {
       if (!developerId || !/^\d+$/.test(developerId)) return;
 
-      // 从 session 获取完整信息
       const result = await probeDeveloperId();
-      const nickname = result && result.profile ? result.profile.nickname : '';
-      const avatar = result && result.profile ? result.profile.avatar : '';
-      const studios = result && result.studios ? result.studios : [];
-
-      const exists = accounts.list.find(a => a.developerId === developerId);
-      if (!exists) {
-        accounts.list.push({
-          id: developerId,
-          developerId,
-          name: nickname || ('开发者 ' + developerId.slice(-4)),
-          avatar,
-          studios,
-        });
+      if (!result) {
+        // probe 失败但 URL 已经拿到 ID，构造最小占位数据
+        upsertAccountFromProbe({
+          developerId: String(developerId), nickname: '', avatar: '',
+          developerName: '', developerAvatar: '', studios: [],
+        }, { mode });
       } else {
-        if (nickname) exists.name = nickname;
-        if (avatar) exists.avatar = avatar;
-        exists.studios = studios;
+        upsertAccountFromProbe(result, { mode });
       }
 
-      if (mode !== 'add') {
-        accounts.activeId = developerId;
-      }
-      saveAccounts();
-
+      const finalAcc = accounts.accounts.find(a => a.developerId === String(developerId));
       if (mainWindow) {
         mainWindow.webContents.send('login-success');
-        if (mode !== 'add') mainWindow.webContents.reload();
+        mainWindow.webContents.send('account-updated', {
+          isNew: !!(result && !accounts.accounts.some(a => a.developerId !== String(developerId) && a.id === (finalAcc && finalAcc.id))),
+          alreadyCurrent: false,
+          switched: mode !== 'add',
+          developerId: String(developerId),
+        });
+        if (mode !== 'add') {
+          activeDeveloperId = String(developerId);
+          mainWindow.webContents.reload();
+        }
       }
-      finish({ success: true, developerId });
+      finish({ success: true, developerId: String(developerId) });
     };
 
-    // 通过 JS 注入检测登录状态（对齐 Android checkLogin()）
     const jsCheck = () => {
       if (resolved || loginWindow.isDestroyed()) return;
       winContents.executeJavaScript(`
@@ -477,13 +639,10 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
           } catch (e) { return null; }
         })()
       `).then((result) => {
-        if (result && !resolved) {
-          saveAndFinish(String(result));
-        }
+        if (result && !resolved) saveAndFinish(String(result));
       }).catch(() => {});
     };
 
-    // Native cookie 探测（对齐 Android checkLoginNatively()）
     const nativeCheck = async () => {
       if (resolved || nativeCheckAttempts >= MAX_NATIVE_ATTEMPTS) return;
       nativeCheckAttempts++;
@@ -495,28 +654,17 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       }
     };
 
-    // 页面事件处理（对齐 Android WebViewClient）
     const onPageEvent = (url) => {
       if (resolved) return;
-
-      // 1. 从 URL 中直接提取开发者 ID
       const idFromUrl = extractDeveloperIdFromUrl(url);
-      if (idFromUrl) {
-        saveAndFinish(idFromUrl);
-        return;
-      }
-
-      // 2. 定时 JS 注入检测
+      if (idFromUrl) { saveAndFinish(idFromUrl); return; }
       setTimeout(jsCheck, 900);
-
-      // 3. Native cookie 探测
       setTimeout(nativeCheck, 1400);
     };
 
     winContents.on('did-navigate', (ev, url) => onPageEvent(url));
     winContents.on('did-navigate-in-page', (ev, url) => onPageEvent(url));
 
-    // 拦截导航中的原生 scheme（will-navigate 只在主框架触发）
     winContents.on('will-navigate', (ev, url) => {
       try {
         const u = new URL(url);
@@ -532,14 +680,11 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       if (!resolved) finish({ success: false, reason: 'closed' });
     });
 
-    // 'add' 模式：先清除 session cookie，再加载首页（让用户重新登录）
     const startLogin = () => {
-      // 加载 TapTap 开发者首页（不是 /login/！对齐 Android）
       loginWindow.loadURL('https://developer.taptap.cn/');
     };
 
     if (mode === 'add') {
-      // 清除所有 TapTap 相关 cookie
       session.defaultSession.clearStorageData({
         storages: ['cookies'],
         origins: ['https://developer.taptap.cn', 'https://passport.taptap.cn', 'https://www.taptap.cn', 'https://www.taptap.com'],
@@ -550,45 +695,79 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
   });
 });
 
-ipcMain.handle('bridge:getAccounts', () => accounts);
+// 返回 { current, accounts } 对齐前端
+ipcMain.handle('bridge:getAccounts', () => {
+  return { current: accounts.current, accounts: accounts.accounts };
+});
 
 ipcMain.handle('bridge:switchAccount', (event, id) => {
-  const acc = accounts.list.find(a => a.developerId === id || a.id === id);
-  if (acc) {
-    accounts.activeId = acc.developerId;
-    saveAccounts();
-    if (mainWindow) mainWindow.webContents.send('account-updated', { activeId: accounts.activeId });
+  const acc = accounts.accounts.find(a => a.id === id);
+  if (!acc) {
+    if (mainWindow) mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: false, switched: false, developerId: null });
+    return { ok: false, error: '账号不存在' };
+  }
+  const alreadyCurrent = accounts.current === acc.id;
+  if (alreadyCurrent) {
+    if (mainWindow) mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: true, switched: false, developerId: acc.developerId });
     return { ok: true };
   }
-  return { ok: false, error: '账号不存在' };
+  accounts.current = acc.id;
+  activeDeveloperId = acc.developerId;
+  saveAccounts();
+  if (mainWindow) {
+    mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: false, switched: true, developerId: acc.developerId });
+    // 切换账号后刷新页面（拉取该账号最新数据）
+    mainWindow.webContents.reload();
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('bridge:addAccount', (event, data) => {
   const name = (data && data.name) || '';
   const developerId = (data && data.developerId) || '';
-  if (developerId && !accounts.list.find(a => a.developerId === developerId)) {
-    accounts.list.push({ id: developerId, developerId, name: name || developerId, avatar: '', studios: [] });
+  if (developerId && !accounts.accounts.find(a => a.developerId === String(developerId))) {
+    const acc = {
+      id: genAccId(),
+      name: name || developerId,
+      developerId: String(developerId),
+      developerName: name || '',
+      developerAvatar: '',
+      nickname: name || '',
+      avatar: '',
+      partition: 'persist:taptap-' + developerId,
+      studios: [],
+    };
+    accounts.accounts.push(acc);
+    if (!accounts.current) {
+      accounts.current = acc.id;
+      activeDeveloperId = acc.developerId;
+    }
     saveAccounts();
   }
 });
 
 ipcMain.handle('bridge:removeAccount', (event, id) => {
-  const before = accounts.list.length;
-  accounts.list = accounts.list.filter(a => a.developerId !== id && a.id !== id);
-  if (accounts.activeId === id) {
-    accounts.activeId = accounts.list.length > 0 ? accounts.list[0].developerId : null;
+  const idx = accounts.accounts.findIndex(a => a.id === id);
+  if (idx < 0) return { ok: false, error: '账号不存在' };
+  const removed = accounts.accounts[idx];
+  accounts.accounts.splice(idx, 1);
+  if (accounts.current === removed.id) {
+    if (accounts.accounts.length > 0) {
+      accounts.current = accounts.accounts[0].id;
+      activeDeveloperId = accounts.accounts[0].developerId;
+    } else {
+      accounts.current = null;
+      activeDeveloperId = null;
+    }
   }
   saveAccounts();
-  const ok = before !== accounts.list.length;
-  return { ok, error: ok ? null : '账号不存在' };
+  return { ok: true };
 });
 
-// 打开资源管理器（数据目录）
 ipcMain.handle('bridge:openExplorer', () => {
   shell.openPath(DATA_DIR);
 });
 
-// API 捕获/回放（桌面版简单实现）
 ipcMain.handle('bridge:getCapturedApis', () => []);
 ipcMain.handle('bridge:clearCapturedApis', () => {});
 ipcMain.handle('bridge:replayApi', async (event, url) => {
@@ -609,13 +788,11 @@ ipcMain.handle('bridge:replayApi', async (event, url) => {
 });
 ipcMain.handle('bridge:replayKeyApis', () => ({ count: 0, saved: false }));
 
-// 获取偏好设置
 ipcMain.handle('bridge:getPreferences', () => preferences);
 
 // ====== App 生命周期 ======
 app.whenReady().then(() => {
   session.defaultSession.setUserAgent(DESKTOP_UA);
-  // 全局允许第三方 cookie
   session.defaultSession.cookies.set({
     url: 'https://developer.taptap.cn',
     name: '_third_party_cookie_check',
@@ -624,6 +801,9 @@ app.whenReady().then(() => {
     secure: true,
   }).catch(() => {});
   createWindow();
+
+  // 启动 3 秒后静默检查更新（对齐 Android UpdateChecker 冷启动后 3s）
+  setTimeout(silentUpdateCheck, 3000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -634,7 +814,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// 后台定时刷新（每 5 分钟）
 setInterval(() => {
   if (mainWindow) {
     mainWindow.webContents.executeJavaScript('if(window.__onAppBackgroundTick)window.__onAppBackgroundTick();');
