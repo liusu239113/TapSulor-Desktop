@@ -1248,16 +1248,8 @@
     }
   });
 
-  // ========== 初始化 ==========
-  const gameData = sessionStorage.getItem('currentGame');
-  if (gameData) {
-    currentGame = JSON.parse(gameData);
-    renderGameInfo(currentGame);
-    currentSelectedMonth = currentMonthStr();
-    // 默认下拉先放当前月（探测完成后再补全）
-    earliestMonth = currentMonthStr();
-    updateMonthTitle();
-    // 先获取 developer_id（支持多账号），再并发加载数据
+  // ========== APP ID 切换（验证接口是否校验归属） ==========
+  function startLoad() {
     (async () => {
       DEVELOPER_ID = await window.electronAPI.getDeveloperId();
       loadMonth();
@@ -1265,6 +1257,62 @@
       loadGameOverall();
       probeGrandTotal();
     })();
+  }
+
+  // 切换到任意 APP ID：重建 currentGame，并用同一套接口重新拉取该游戏数据
+  async function switchAppId(rawId) {
+    const id = String(rawId == null ? '' : rawId).trim();
+    if (!id || !/^\d+$/.test(id)) {
+      alert('请输入有效的数字 APP ID');
+      return;
+    }
+    currentGame = { appId: id, name: 'APP ' + id };
+    renderGameInfo(currentGame);
+    currentSelectedMonth = currentMonthStr();
+    earliestMonth = currentMonthStr();
+    updateMonthTitle();
+    // 重置累计与月份缓存，避免串数据
+    grandTotal = null;
+    currentMonthData = null;
+    const gt = document.getElementById('grand-total');
+    if (gt) gt.textContent = '¥—';
+    const grid = document.getElementById('daily-grid');
+    if (grid) grid.innerHTML = '<div class="loading-tip">加载中...</div>';
+    startLoad();
+  }
+
+  const appidInput = document.getElementById('appid-input');
+  const appidGo = document.getElementById('appid-go');
+  if (appidGo && appidInput) {
+    appidGo.addEventListener('click', () => switchAppId(appidInput.value));
+    appidInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') switchAppId(appidInput.value);
+    });
+  }
+
+  // ========== 初始化 ==========
+  const gameData = sessionStorage.getItem('currentGame');
+  let initialAppId = null;
+  try {
+    const params = new URLSearchParams(location.search);
+    initialAppId = params.get('app_id');
+  } catch (_) {}
+
+  function bootstrap(game) {
+    currentGame = game;
+    renderGameInfo(currentGame);
+    currentSelectedMonth = currentMonthStr();
+    earliestMonth = currentMonthStr();
+    updateMonthTitle();
+    if (appidInput && initialAppId) appidInput.value = initialAppId;
+    startLoad();
+  }
+
+  if (gameData) {
+    bootstrap(JSON.parse(gameData));
+  } else if (initialAppId) {
+    // 直接通过 detail.html?app_id=XXX 打开（无需先点开自己的游戏）
+    bootstrap({ appId: initialAppId, name: 'APP ' + initialAppId });
   } else {
     window.location.href = 'index.html';
   }

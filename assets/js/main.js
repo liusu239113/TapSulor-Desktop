@@ -957,6 +957,21 @@
     window.location.href = 'detail.html?app_id=' + game.appId;
   }
 
+  // 主页面「查任意 APP ID」入口：直接跳到该 ID 的详情页
+  // detail.html 已支持 ?app_id= 兜底加载（无需先点开自己的游戏）
+  function wireHomeAppIdSwitch() {
+    const go = document.getElementById('appid-go-home');
+    const input = document.getElementById('appid-input-home');
+    if (!go || !input) return;
+    const jump = () => {
+      const id = String(input.value || '').trim();
+      if (!id || !/^\d+$/.test(id)) { alert('请输入有效的数字 APP ID'); return; }
+      window.location.href = 'detail.html?app_id=' + encodeURIComponent(id);
+    };
+    go.addEventListener('click', jump);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') jump(); });
+  }
+
   function renderAll() {
     const games = getVisibleGames();
     renderSummary(games);
@@ -965,6 +980,7 @@
 
   // ========== 初始化 ==========
   async function init() {
+    wireHomeAppIdSwitch();
     renderAll();
 
     if (!isElectron) {

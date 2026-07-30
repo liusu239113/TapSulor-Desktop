@@ -51,6 +51,14 @@
       </div>
     </header>
 
+    <!-- APP ID 切换：用当前登录态请求任意 APP ID 的数据，用于验证接口是否校验归属 -->
+    <div class="appid-switch" id="appid-switch">
+      <span class="appid-switch-label">APP ID</span>
+      <input type="text" id="appid-input" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="输入任意 APP ID，查看其收益 / 日活等数据" />
+      <button class="appid-switch-btn" id="appid-go">切换查看</button>
+      <span class="appid-switch-hint">使用你自己的登录态请求；若接口未校验归属即可读到他人游戏数据</span>
+    </div>
+
     <!-- 游戏概览（overview-card 类名保留作为 JS 插入锚点） -->
     <div class="overview-card stat-deck">
       <div class="stat-tile stat-tile-yesterday">
