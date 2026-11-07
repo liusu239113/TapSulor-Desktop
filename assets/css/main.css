@@ -1551,3 +1551,18 @@ html.explorer-on .api-panel { display: block; }
 .withdraw-btn.ghost { background: transparent; border-color: var(--border-light); color: var(--text-secondary); }
 .withdraw-btn.primary { background: var(--taptap-cyan); color: #fff; }
 .withdraw-btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ==================== 关于作者 ==================== */
+.author-card { margin-top: 10px; background: var(--bg-muted); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.author-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.author-label { flex: 0 0 64px; color: var(--text-tertiary); font-size: 12px; }
+.author-value { color: var(--text-primary); font-weight: 600; }
+.author-link { color: var(--taptap-cyan); font-size: 12px; text-decoration: none; word-break: break-all; }
+.author-link:hover { text-decoration: underline; }
+#author-qq { cursor: pointer; }
+
+/* 提现余额小标签 */
+.wd-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--bg-muted); color: var(--text-tertiary); }
+.wd-tag.ok { background: rgba(16,185,129,.14); color: #10b981; }
+.wd-tag.dim { opacity: .75; }
+.withdraw-min { margin-left: 8px; font-size: 11px; color: var(--text-tertiary); font-weight: 400; }

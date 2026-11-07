@@ -988,22 +988,27 @@
         summary.textContent = '查询失败：' + ((res && res.error) || '未知错误');
         return;
       }
-      wdItems = (res.items || []).filter(i => i.balance != null && i.balance > 0);
+      // 只列有激励计划现金余额的游戏
+      wdItems = (res.items || []).filter(i => (i.auto || 0) > 0);
       const eligible = wdItems.filter(i => i.eligible);
       if (!wdItems.length) {
-        summary.textContent = '当前厂商下没有可提现余额';
+        summary.textContent = '当前厂商下没有可提现的激励计划现金（激励计划按现金收入结算，最低提现 100 元）';
         return;
       }
-      summary.innerHTML = '可提现游戏 <b>' + eligible.length + '</b> 个 · 合计 <b>¥' + (res.total || 0).toFixed(2) + '</b>';
-      list.innerHTML = wdItems.map(i =>
-        '<div class="withdraw-row' + (i.eligible ? '' : ' is-disabled') + '">' +
+      summary.innerHTML =
+        '激励计划可提现 <b>' + (res.eligibleCount || 0) + '</b> 个游戏 · 合计 <b>¥' + (res.total || 0).toFixed(2) + '</b>' +
+        '<span class="withdraw-min">最低 100 元/笔</span>';
+      list.innerHTML = wdItems.map(i => {
+        const a = Number.isFinite(i.auto) ? i.auto : 0;
+        const state = i.eligible ? '可提现' : '未满 100 元';
+        return '<div class="withdraw-row' + (i.eligible ? '' : ' is-disabled') + '">' +
           '<span class="withdraw-row-title">' + String(i.title || i.appId).replace(/[<>&]/g, '') + '</span>' +
-          '<span class="withdraw-row-balance">¥' + (i.balance || 0).toFixed(2) + '</span>' +
-          '<span class="withdraw-row-state">' + (i.eligible ? '可提现' : '不足 5 元') + '</span>' +
-        '</div>'
-      ).join('');
+          '<span class="withdraw-row-balance">¥' + a.toFixed(2) + '</span>' +
+          '<span class="withdraw-row-state">' + state + '</span>' +
+        '</div>';
+      }).join('');
       confirmBtn.disabled = eligible.length === 0;
-      confirmBtn.textContent = eligible.length ? ('确认提现 ' + eligible.length + ' 个游戏') : '无可提现游戏';
+      confirmBtn.textContent = eligible.length ? ('确认提现 ' + eligible.length + ' 个游戏') : '暂无可提现游戏';
     }).catch((e) => {
       summary.textContent = '查询失败：' + (e.message || e);
     });
@@ -1017,7 +1022,7 @@
     const note = document.getElementById('withdraw-note');
     const eligible = wdItems.filter(i => i.eligible);
     if (!eligible.length) return;
-    const total = eligible.reduce((s, i) => s + (i.balance || 0), 0);
+    const total = eligible.reduce((s, i) => s + (i.auto || 0), 0);
 
     // 二次确认：第一次点击只“上膛”，10 秒内再点才真正提交
     if (!wdArmed) {
@@ -1047,8 +1052,9 @@
         '成功 <b>' + okCount + '</b> / ' + results.length + ' 笔' + (failList.length ? '，失败 ' + failList.length + ' 笔' : '');
       document.getElementById('withdraw-list').innerHTML = results.map(r => {
         const item = wdItems.find(i => String(i.appId) === String(r.appId)) || {};
+        const schemeLabel = '激励';
         return '<div class="withdraw-row">' +
-          '<span class="withdraw-row-title">' + String(item.title || r.appId) + '</span>' +
+          '<span class="withdraw-row-title">' + String(item.title || r.appId) + ' <span class="wd-tag dim">' + schemeLabel + '</span></span>' +
           '<span class="withdraw-row-balance">¥' + (r.amount != null ? Number(r.amount).toFixed(2) : '—') + '</span>' +
           '<span class="withdraw-row-state ' + (r.ok ? 'ok' : 'fail') + '">' + (r.ok ? '已提交' : (r.msg || r.error || '失败')) + '</span>' +
         '</div>';
@@ -1080,9 +1086,15 @@
     const cancel = document.getElementById('withdraw-cancel');
     const overlay = document.getElementById('withdraw-overlay');
     const confirm = document.getElementById('withdraw-confirm');
+    const refresh = document.getElementById('withdraw-refresh');
     if (close) close.addEventListener('click', closeWithdrawModal);
     if (cancel) cancel.addEventListener('click', closeWithdrawModal);
     if (overlay) overlay.addEventListener('click', closeWithdrawModal);
+    if (refresh) refresh.addEventListener('click', () => {
+      const b = document.getElementById('withdraw-confirm');
+      if (b) { b.onclick = executeWithdraw; b.disabled = false; b.textContent = '确认提现'; }
+      openWithdrawModal();
+    });
     if (confirm) confirm.addEventListener('click', executeWithdraw);
   }
 
