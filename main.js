@@ -3,9 +3,11 @@ const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.3';
-const VERSION_CODE = 3;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.4';
+const VERSION_CODE = 4;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
+// 部分网络环境下该域名 HTTPS 会被中断（Chromium 内核报 ERR_CONNECTION_CLOSED），自动回退 http
+const UPDATE_URL_FALLBACK = 'http://ark.yanyususu.online/tapsulor/version.json';
 const UPDATE_UA = `TapSulor/${APP_VERSION} (Windows)`;
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const TAPTAP_REFERER = 'https://developer.taptap.cn/';
@@ -1137,21 +1139,24 @@ ipcMain.handle('bridge:switchStudio', (event, developerId) => {
 
 // ====== 更新检查（对齐 Android UpdateChecker.kt） ======
 async function fetchUpdateInfo() {
-  try {
-    const response = await net.fetch(UPDATE_URL, {
-      headers: { 'User-Agent': UPDATE_UA, 'Accept': 'application/json' },
-    });
-    if (!response.ok) { appLog('[update] HTTP', response.status); return null; }
-    const json = await response.json();
-    if (!json) return null;
-    // 线上 version.json 按平台分层：{ android: {...}, windows: {...}, admin: {...} }
-    const picked = json.windows || json;
-    appLog('[update] version.json:', JSON.stringify(picked).slice(0, 200));
-    return picked;
-  } catch (err) {
-    appLog('[update] fetch error:', String(err.message || err).slice(0, 120));
-    return null;
+  const urls = [UPDATE_URL, UPDATE_URL_FALLBACK];
+  for (const url of urls) {
+    try {
+      const response = await net.fetch(url, {
+        headers: { 'User-Agent': UPDATE_UA, 'Accept': 'application/json' },
+      });
+      if (!response.ok) { appLog('[update]', url.slice(0, 8), 'HTTP', response.status); continue; }
+      const json = await response.json();
+      if (!json) continue;
+      // 线上 version.json 按平台分层：{ android: {...}, windows: {...}, admin: {...} }
+      const picked = json.windows || json;
+      appLog('[update] version.json via', url.slice(0, 5), ':', JSON.stringify(picked).slice(0, 180));
+      return picked;
+    } catch (err) {
+      appLog('[update]', url.slice(0, 5), 'fetch error:', String(err.message || err).slice(0, 90));
+    }
   }
+  return null;
 }
 
 function pickDownloadUrl(info) {
