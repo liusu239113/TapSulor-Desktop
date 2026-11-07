@@ -1053,7 +1053,23 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       };
       prepAdd().catch(startLogin);
     } else {
-      startLogin();
+      // 普通登录：清除残留的 ACCOUNTS_SESS。
+      // 残留的过期会话 Cookie 会让 device-code/login 成功后服务器不再下发新会话，
+      // 页面拿着过期 Cookie 请求用户资料报「页面已经过期」，二维码登录因此卡死。
+      const prepNormal = async () => {
+        try {
+          const stale = await session.defaultSession.cookies.get({ name: 'ACCOUNTS_SESS' });
+          for (const c of stale) {
+            const url = 'https://' + (c.domain ? c.domain.replace(/^\./, '') : 'accounts.taptap.cn') + (c.path || '/');
+            await session.defaultSession.cookies.remove(url, 'ACCOUNTS_SESS');
+          }
+          appLog('[login] 已清除残留 ACCOUNTS_SESS x' + stale.length);
+        } catch (e) {
+          appLog('[login] 清除 ACCOUNTS_SESS 失败:', String(e).slice(0, 120));
+        }
+        startLogin();
+      };
+      prepNormal().catch(startLogin);
     }
   });
 });
