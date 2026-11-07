@@ -512,9 +512,9 @@ let repTokenCache = { key: null, token: null, fetchedAt: 0 };
 const REP_TOKEN_TTL = 4 * 60 * 60 * 1000; // 4 小时后强制刷新
 function invalidateRepToken() { repTokenCache = { key: null, token: null, fetchedAt: 0 }; }
 
-async function getRepToken(devId) {
+async function getRepToken(devId, force) {
   const key = String(devId || '');
-  if (repTokenCache.token && repTokenCache.key === key && Date.now() - repTokenCache.fetchedAt < REP_TOKEN_TTL) {
+  if (!force && repTokenCache.token && repTokenCache.key === key && Date.now() - repTokenCache.fetchedAt < REP_TOKEN_TTL) {
     return repTokenCache.token;
   }
   const win = new BrowserWindow({
@@ -529,9 +529,19 @@ async function getRepToken(devId) {
       for (const acc of accounts.accounts || []) { consoleDevId = acc.activeDeveloperId || acc.developerId; if (consoleDevId) break; }
     }
     const consoleUrl = consoleDevId ? ('https://rep.taptap.cn/' + consoleDevId + '/') : 'https://rep.taptap.cn/';
+    // op-jwt-token 存在 rep.taptap.cn 的 localStorage 中，而 localStorage 在各账号之间共用。
+    // 换号后残留的旧令牌会让请求以上一个账号的身份发出（服务器回「非法厂商Id」）。
+    // 仅当第一次请求失败时（force=true）才清除令牌并重走授权，避免每次都弹「确认登录」。
+    if (force) {
+      try {
+        await win.loadURL('https://rep.taptap.cn/');
+        await win.webContents.executeJavaScript('(() => { try { localStorage.removeItem("op-jwt-token"); return "cleared"; } catch (e) { return "skip"; } })()')
+          .then(r => appLog('[rep] 清除残留令牌:', r)).catch(() => {});
+      } catch (_) {}
+    }
     await win.loadURL(consoleUrl);
-    appLog('[rep] 打开', consoleUrl);
-    // SSO 静默跳转完成后令牌会写入 localStorage，轮询等待其出现（最多 40s）
+    appLog('[rep] 打开', consoleUrl, force ? '(强制重取)' : '');
+    // 轮询等待令牌出现（最多 40s）；若落在 TapTap 授权页则自动点「确认登录」
     const token = await new Promise((resolve) => {
       let tries = 0;
       const timer = setInterval(async () => {
@@ -540,19 +550,21 @@ async function getRepToken(devId) {
           const info = await win.webContents.executeJavaScript(`(() => ({
             token: localStorage.getItem("op-jwt-token") || null,
             url: location.href,
-            keys: Object.keys(localStorage),
-            text: document.body ? document.body.innerText.slice(0, 200) : ''
+            text: document.body ? document.body.innerText.slice(0, 300) : ''
           }))()`);
           if (info.token) { clearInterval(timer); resolve(info.token); return; }
           if (tries % 8 === 0) {
-            appLog('[rep] 等待令牌中... url =', String(info.url).slice(0, 100), '| keys =', info.keys.join(',').slice(0, 120), '| text =', info.text.replace(/\n/g, ' ').slice(0, 80));
+            appLog('[rep] 等待令牌中... url =', String(info.url).slice(0, 100), '| text =', String(info.text).replace(/\n/g, ' ').slice(0, 90));
           }
-          // 若停在授权确认页，自动点击确认按钮
-          if (/authorize|consent|授权|同意/.test(info.text) || /authorize/.test(info.url)) {
+          // 停在 TapTap 授权页（「TapTap 用户授权 / 确认登录 / 取消登录」）时自动确认
+          if (/确认登录|授权登录|用户授权/.test(info.text) || /accounts\.taptap\.cn\/authorize/.test(info.url)) {
             await win.webContents.executeJavaScript(`(() => {
-              const btns = [...document.querySelectorAll('button, a')];
-              const b = btns.find(x => /确认|授权|同意|允许/.test(x.innerText || ''));
-              if (b) { b.click(); return 'clicked:' + (b.innerText || '').slice(0, 20); }
+              const els = [...document.querySelectorAll('button, a, [role="button"], span, div')];
+              const b = els.find(e => {
+                const t = (e.innerText || '').trim();
+                return t === '确认登录' || t === '授权' || t === '同意' || t === '允许';
+              });
+              if (b) { b.click(); return 'clicked:' + (b.innerText || '').trim().slice(0, 10); }
               return 'no-button';
             })()`).then(r => { if (r !== 'no-button') appLog('[rep] 自动点击授权:', r); }).catch(() => {});
           }
@@ -561,7 +573,7 @@ async function getRepToken(devId) {
       }, 500);
     });
     if (token) repTokenCache = { key, token, fetchedAt: Date.now() };
-    appLog('[rep] token fetch:', token ? 'ok' : 'FAILED (40s 内未在 rep.taptap.cn 拿到令牌，可能需要手动打开 REP 后台确认一次授权)');
+    appLog('[rep] token fetch:', token ? 'ok' : 'FAILED (40s 内未在 rep.taptap.cn 拿到令牌)');
     return token;
   } finally {
     try { win.destroy(); } catch (_) {}
@@ -579,26 +591,38 @@ ipcMain.handle('bridge:repRevenue', async (event, appId) => {
     const token = await getRepToken(developerId);
     if (!token) return { ok: false, status: 0, body: null, error: 'REP_TOKEN_FAIL' };
 
-    const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
-      method: 'GET',
-      headers: {
-        'Authorization': token,
-        'x-app-id': String(appId),
-        'x-developer-id': developerId,
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': DESKTOP_UA,
-        'Referer': 'https://rep.taptap.cn/',
-      },
-    });
-    const body = await response.text();
-    // 令牌失效时清缓存，下次调用重新走 SSO 获取
-    if (response.status === 401 || response.status === 403) {
+    const doFetch = async (tk) => {
+      const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
+        method: 'GET',
+        headers: {
+          'Authorization': tk,
+          'x-app-id': String(appId),
+          'x-developer-id': developerId,
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': DESKTOP_UA,
+          'Referer': 'https://rep.taptap.cn/',
+        },
+      });
+      return { status: response.status, body: await response.text() };
+    };
+
+    let { status, body } = await doFetch(token);
+    // 被拒时（令牌可能仍属于上一个账号）强制重取一次再试
+    if (!(status >= 200 && status < 300)) {
       invalidateRepToken();
+      const tk2 = await getRepToken(developerId, true);
+      if (tk2) {
+        appLog('[rep] 首次失败(' + status + ')，已重取令牌重试');
+        ({ status, body } = await doFetch(tk2));
+      }
     }
-    if (!response.ok) {
-      appLog('[rep] revenue fail, developer_id =', developerId, 'app_id =', appId, 'status =', response.status, String(body).slice(0, 120));
+    const ok = status >= 200 && status < 300;
+    if (!ok) {
+      appLog('[rep] revenue fail, developer_id =', developerId, 'app_id =', appId, 'status =', status, String(body).slice(0, 120));
+    } else {
+      appLog('[rep] revenue ok, developer_id =', developerId, 'app_id =', appId);
     }
-    return { ok: response.ok, status: response.status, body, error: null, developerId };
+    return { ok, status, body, error: null, developerId };
   } catch (err) {
     return { ok: false, status: 0, body: null, error: err.message };
   }
