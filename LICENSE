@@ -1,35 +1,3 @@
-TapSulor - TapTap 开发者数据助手
-Copyright (C) 2026 流苏水寒 <2391130219@qq.com>  (GitHub: liusu239113)
-
-本程序是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证
-（GNU General Public License）第 3 版的条款，重新发布和/或修改它。
-
-本程序基于「希望它有用」的目的发布，但没有任何担保；甚至没有适销性
-或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, version 3 of the License.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
---------------------------------------------------------------------------------
-
-【署名要求 / Attribution】
-
-依据 GPL-3.0 第 5 条与第 7 条，任何转载、修改、二次分发本项目的个人或组织，
-必须保留本版权声明与作者署名「流苏水寒」，不得移除或篡改。
-
-【开源要求 / Copyleft】
-
-依据 GPL-3.0 第 5 条，任何基于本项目修改后向外分发的作品（包括但不限于
-修改后的源码、编译生成的安装包 APK / IPA / EXE），其整体必须以 GPL-3.0
-协议公开完整对应源码，不得闭源分发。
-
---------------------------------------------------------------------------------
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
