@@ -8,7 +8,9 @@
   'use strict';
 
   const STORE_KEY = 'taptap_scratch_mode';
-  const TARGETS = ['summary-total', 'summary-today', 'summary-month'];
+  // 只遮住「昨日广告收益」整块瓦片
+  const TARGET_IDS = ['summary-today'];
+  const TARGET_CARD = '.stat-tile-yesterday';
 
   function enabled() {
     try { return localStorage.getItem(STORE_KEY) === '1'; } catch (_) { return false; }
@@ -34,21 +36,33 @@
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    // 底色：像素风渐变 + 噪点
+    // 涂层质感：银灰渐变 + 斜向高光条 + 像素噪点，像真的刮刮卡
     const g = ctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0, '#8b7cf6');
-    g.addColorStop(1, '#25b6e9');
+    g.addColorStop(0, '#dfe6f2');
+    g.addColorStop(0.45, '#c2cbdc');
+    g.addColorStop(1, '#9fa9bd');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    for (let i = 0; i < Math.max(18, Math.floor((w * h) / 260)); i++) {
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 6;
+    for (let x = -h; x < w + h; x += 22) {
+      ctx.beginPath();
+      ctx.moveTo(x, h);
+      ctx.lineTo(x + h, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(90,104,128,0.35)';
+    for (let i = 0; i < Math.max(24, Math.floor((w * h) / 200)); i++) {
       ctx.fillRect(Math.random() * w, Math.random() * h, 2, 2);
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.font = '600 11px -apple-system, "Segoe UI", sans-serif';
+    ctx.fillStyle = 'rgba(60,72,96,0.85)';
+    ctx.font = '700 13px -apple-system, "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('刮开查看', w / 2, h / 2);
+    ctx.fillText('滑动刮开', w / 2, h / 2);
 
     // 刮开逻辑
     let drawing = false;
@@ -121,14 +135,32 @@
 
   function coverAll() {
     if (!enabled()) return;
-    for (const id of TARGETS) {
-      const el = document.getElementById(id);
-      if (!el || overlays.has(el)) continue;
-      const text = (el.textContent || '').trim();
-      if (!text || text === '暂无' || text === '¥0.00' && false) { /* 仍然遮住 */ }
-      makeOverlay(el);
+    // 覆盖整个「昨日广告收益」瓦片（含标题、数值、副标题）
+    const el = document.querySelector(TARGET_CARD) || document.getElementById(TARGET_IDS[0]);
+    if (!el) { setTimeout(coverAll, 600); return; }
+    const rect = el.getBoundingClientRect();
+    // 布局尚未完成（宽高为 0）时稍后重试
+    if (rect.width < 20 || rect.height < 12) {
+      if (!el.__scratchRetry || el.__scratchRetry < 12) {
+        el.__scratchRetry = (el.__scratchRetry || 0) + 1;
+        setTimeout(coverAll, 500);
+      }
+      return;
     }
+    el.__scratchRetry = 0;
+    const existing = overlays.get(el);
+    if (existing) {
+      const cr = existing.getBoundingClientRect();
+      // 尺寸一致则保留，不一致（窗口缩放/布局变化）则重建
+      if (Math.abs(cr.width - rect.width) < 2 && Math.abs(cr.height - rect.height) < 2) return;
+      try { existing.remove(); } catch (_) {}
+      overlays.delete(el);
+    }
+    makeOverlay(el);
   }
+
+  // 窗口尺寸变化后重建遮罩
+  window.addEventListener('resize', () => { if (enabled()) coverAll(); });
 
   function uncoverAll() {
     for (const [el, canvas] of overlays.entries()) {

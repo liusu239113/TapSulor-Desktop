@@ -15,11 +15,13 @@
     { key: 'new', label: '新品榜', total: 100 },
     { key: 'game_jam', label: '聚光灯榜', total: 100 }
   ];
+  const MAKER_TAG = 'TapTap制造';
   const PAGE_SIZE = 10;
   const REFRESH_MS = 20 * 60 * 1000; // 对齐官方「每 20 分钟更新」
 
   const state = {
-    board: 'hot',          // 当前榜单 or 'summary'
+    board: 'hot',          // 当前榜单 or 'summary' / 'maker'
+    tag: '',               // 标签筛选（'' = 全部）
     data: {},              // key -> items[]
     history: {},           // key -> snapshots[]
     loadedAt: null,
@@ -85,6 +87,7 @@
           reviews: stat.review_count,
           fans: stat.fans_count,
           labels: app.title_labels || [],
+          tags: (app.tags || []).map(t => (t && t.value) || '').filter(Boolean),
           isAd: !!it.is_ad
         });
       });
@@ -178,8 +181,45 @@
   }
 
   // ---------- 渲染 ----------
+  // 标签筛选：统计三榜出现过的标签，按频次排序
+  function allTags() {
+    const count = new Map();
+    for (const b of BOARDS) {
+      for (const it of (state.data[b.key] || [])) {
+        for (const t of (it.tags || [])) {
+          if (!t) continue;
+          count.set(t, (count.get(t) || 0) + 1);
+        }
+      }
+    }
+    return [...count.entries()].sort((a, b) => b[1] - a[1]).map(x => x[0]);
+  }
+
+  function renderTags() {
+    const bar = $('rank-tags');
+    if (!bar) return;
+    const tags = allTags();
+    if (!tags.length) { bar.innerHTML = ''; return; }
+    const priority = [MAKER_TAG, '模拟经营', '模拟', '放置', '角色扮演', '休闲', '养成', '策略'];
+    const head = priority.filter(t => tags.includes(t));
+    const rest = tags.filter(t => !head.includes(t)).slice(0, 12);
+    const list = [''].concat(head).concat(rest);
+    bar.innerHTML = list.map(t => {
+      const label = t === '' ? '全部' : t;
+      const active = (state.tag === t) ? ' is-active' : '';
+      return '<button type="button" class="rank-tag' + active + '" data-tag="' + esc(t) + '">' + esc(label) + '</button>';
+    }).join('');
+  }
+
+  function matchTag(item) {
+    if (!state.tag) return true;
+    return (item.tags || []).includes(state.tag);
+  }
+
   function rowHTML(item, key) {
-    const d = deltaFor(key, item) || {};
+    const d = (item.preDelta !== undefined)
+      ? { heat: item.preDelta, rank: null, isNew: false }
+      : (deltaFor(key, item) || {});
     const heatDelta = fmtDelta(d.heat);
     const rankDelta = d.rank == null ? '' : (d.rank > 0 ? '<span class="rank-up">↑' + d.rank + '</span>' : (d.rank < 0 ? '<span class="rank-down">↓' + Math.abs(d.rank) + '</span>' : ''));
     const labels = (item.labels || []).map(l => '<span class="rank-label">' + l + '</span>').join('');
@@ -208,24 +248,70 @@
     const board = state.board;
     const list = $('rank-list');
     const summary = $('rank-summary');
+    hideDetail();
+    renderTags();
     $('rank-updated').textContent = state.loadedAt ? ('更新于 ' + fmtTime(state.loadedAt) + ' · 每 20 分钟') : '尚未加载';
 
     if (board === 'summary') {
       list.hidden = true;
       summary.hidden = false;
       renderSummary();
+      updateScrollButtons();
+      return;
+    }
+    if (board === 'maker') {
+      list.hidden = false;
+      summary.hidden = true;
+      renderMakerBoard();
       return;
     }
     list.hidden = false;
     summary.hidden = true;
 
-    const items = state.data[board] || [];
-    if (!items.length) { list.innerHTML = '<div class="loading-tip">暂无数据</div>'; return; }
+    const items = (state.data[board] || []).filter(matchTag);
+    if (!items.length) {
+      list.innerHTML = '<div class="loading-tip">' + (state.tag ? ('该榜单暂无「' + state.tag + '」标签的游戏') : '暂无数据') + '</div>';
+      return;
+    }
     const base = baseline(board);
     list.innerHTML =
-      '<div class="rank-hint">' + (base ? ('变化基准：' + fmtTime(base.ts) + (base.ts > Date.now() - 3600000 ? '（运行不足 1 小时，暂用最早快照）' : '')) : '首次运行，本小时后开始记录变化') + '</div>' +
+      '<div class="rank-hint">' + (state.tag ? ('筛选：' + state.tag + ' · 共 ' + items.length + ' 款 · ') : '') + (base ? ('变化基准：' + fmtTime(base.ts) + (base.ts > Date.now() - 3600000 ? '（运行不足 1 小时，暂用最早快照）' : '')) : '首次运行，本小时后开始记录变化') + '</div>' +
       items.map(it => rowHTML(it, board)).join('');
     bindRows();
+    updateScrollButtons();
+  }
+
+  // TapTap 制造榜：三榜里带「TapTap制造」标签的游戏，按热度排序
+  function makerItems() {
+    const map = new Map();
+    for (const b of BOARDS) {
+      for (const it of (state.data[b.key] || [])) {
+        if (!(it.tags || []).includes(MAKER_TAG)) continue;
+        const cur = map.get(it.id);
+        const d = deltaFor(b.key, it) || {};
+        if (!cur) {
+          map.set(it.id, { ...it, board: b.key, boardLabel: b.label, heatDelta: d.heat });
+        } else if ((it.hits || 0) > (cur.hits || 0)) {
+          map.set(it.id, { ...it, board: b.key, boardLabel: b.label, heatDelta: d.heat });
+        }
+      }
+    }
+    return [...map.values()].sort((a, b2) => (b2.hits || 0) - (a.hits || 0));
+  }
+
+  function renderMakerBoard() {
+    const list = $('rank-list');
+    const items = makerItems().filter(matchTag);
+    if (!items.length) {
+      list.innerHTML = '<div class="rank-hint">三个榜里暂时没有符合「' + (state.tag || MAKER_TAG) + '」标签的制造游戏（该标签来自游戏在 TapTap 上的分类）</div><div class="loading-tip">暂无数据</div>';
+      updateScrollButtons();
+      return;
+    }
+    list.innerHTML =
+      '<div class="rank-hint">共 ' + items.length + ' 款 TapTap 制造游戏在榜' + (state.tag ? ('（筛选：' + state.tag + '）') : '') + ' · 按热度排序</div>' +
+      items.map((it, i) => rowHTML({ ...it, rank: i + 1, preDelta: it.heatDelta }, 'maker')).join('');
+    bindRows();
+    updateScrollButtons();
   }
 
   // 汇总：三榜合并去重，涨幅榜 / 新进榜 / 热度榜
@@ -240,7 +326,7 @@
         if (!cur || (row.hits || 0) > (cur.hits || 0)) merged.set(it.id, row);
       }
     }
-    const all = [...merged.values()];
+    const all = [...merged.values()].filter(matchTag);
     const withDelta = all.filter(x => x.heatDelta != null).sort((a, b) => b.heatDelta - a.heatDelta);
     const newOnes = all.filter(x => x.isNew);
     const topHeat = [...all].sort((a, b) => (b.hits || 0) - (a.hits || 0)).slice(0, 30);
@@ -252,6 +338,7 @@
           const dv = fmtDelta(r.heatDelta);
           return '<div class="rank-sum-row" data-app-id="' + r.id + '" data-board="' + r.board + '">' +
             '<span class="rank-sum-idx">' + (i + 1) + '</span>' +
+            '<img class="rank-sum-icon" src="' + (r.icon || 'app-icon.png') + '" alt="" loading="lazy">' +
             '<span class="rank-sum-title">' + esc(r.title) + '</span>' +
             '<span class="rank-sum-board">' + r.boardLabel + '</span>' +
             '<span class="rank-sum-heat">' + fmtHeat(r.hits) + '</span>' +
@@ -261,13 +348,14 @@
     };
 
     wrap.innerHTML =
+      (state.tag ? '<div class="rank-hint">汇总筛选：' + esc(state.tag) + '</div>' : '') +
       '<div class="rank-sum-grid">' +
         card('涨幅榜', '近 1 小时热度增长', withDelta, true) +
         card('新进榜', '最近才出现在榜单里', newOnes, false) +
         card('热度榜', '当前热度 Top 30', topHeat, false) +
       '</div>';
     wrap.querySelectorAll('.rank-sum-row').forEach(el => {
-      el.addEventListener('click', () => openDetail(el.dataset.appId, el.dataset.board));
+      el.addEventListener('click', () => openDetail(el.dataset.appId, el.dataset.board, el));
     });
   }
 
@@ -301,13 +389,25 @@
       '</div>'
     ).join('');
     box.querySelectorAll('.rank-sum-row').forEach(el => {
-      el.addEventListener('click', () => openDetail(el.dataset.appId, el.dataset.board));
+      el.addEventListener('click', () => openDetail(el.dataset.appId, el.dataset.board, el));
     });
   }
 
-  // ---------- 详情 ----------
-  async function openDetail(appId, board) {
+  // ---------- 详情（就地展开在点击的那一行下方） ----------
+  function hideDetail() {
+    const p = $('rank-detail');
+    if (p) p.hidden = true;
+  }
+  function placeDetail(anchor) {
+    const p = $('rank-detail');
+    if (!p) return;
+    if (anchor && anchor.parentNode) anchor.insertAdjacentElement('afterend', p);
+    p.hidden = false;
+  }
+
+  async function openDetail(appId, board, anchor) {
     const panel = $('rank-detail');
+    placeDetail(anchor && anchor.nodeType === 1 ? anchor : null);
     panel.hidden = false;
     $('rank-detail-title').textContent = '加载中…';
     $('rank-detail-sub').textContent = '';
@@ -410,12 +510,41 @@
   // ---------- 事件绑定 ----------
   function bindRows() {
     document.querySelectorAll('#rank-list .rank-row').forEach(el => {
-      el.addEventListener('click', () => openDetail(el.dataset.appId, el.dataset.board));
+      el.addEventListener('click', () => openDetail(el.dataset.appId, el.dataset.board, el));
     });
+  }
+
+  // ---------- 回顶 / 到底 ----------
+  let lastScrollY = 0;
+  function updateScrollButtons() {
+    const topBtn = $('rank-scroll-top');
+    const botBtn = $('rank-scroll-bottom');
+    if (!topBtn || !botBtn) return;
+    const y = window.scrollY || document.documentElement.scrollTop || 0;
+    const max = (document.documentElement.scrollHeight - window.innerHeight);
+    const view = $('view-rank');
+    const active = view && !view.hidden;
+    topBtn.classList.toggle('is-show', active && y > 200);
+    botBtn.classList.toggle('is-show', active && max - y > 200);
+    const dir = y > lastScrollY ? 'down' : (y < lastScrollY ? 'up' : '');
+    lastScrollY = y;
+    if (dir) {
+      topBtn.classList.toggle('is-hint', dir === 'up');
+      botBtn.classList.toggle('is-hint', dir === 'down');
+    }
+  }
+  function bindScrollButtons() {
+    const topBtn = $('rank-scroll-top');
+    const botBtn = $('rank-scroll-bottom');
+    if (topBtn) topBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    if (botBtn) botBtn.addEventListener('click', () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }));
+    window.addEventListener('scroll', updateScrollButtons, { passive: true });
+    updateScrollButtons();
   }
 
   function bind() {
     bindViewTabs();
+    bindScrollButtons();
     $('rank-boards').addEventListener('click', (e) => {
       const btn = e.target.closest('.rank-board');
       if (!btn) return;
@@ -424,6 +553,15 @@
       render();
     });
     $('rank-refresh').addEventListener('click', () => loadAll(true));
+    const tagBar = $('rank-tags');
+    if (tagBar) {
+      tagBar.addEventListener('click', (e) => {
+        const btn = e.target.closest('.rank-tag');
+        if (!btn) return;
+        state.tag = btn.getAttribute('data-tag') || '';
+        render();
+      });
+    }
     $('rank-search-btn').addEventListener('click', doSearch);
     $('rank-search-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
     $('rank-detail-close').addEventListener('click', () => { $('rank-detail').hidden = true; });

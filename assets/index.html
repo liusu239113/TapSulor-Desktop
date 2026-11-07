@@ -120,6 +120,7 @@
           <button type="button" class="rank-board is-active" data-board="hot">热门榜</button>
           <button type="button" class="rank-board" data-board="new">新品榜</button>
           <button type="button" class="rank-board" data-board="game_jam">聚光灯榜</button>
+          <button type="button" class="rank-board" data-board="maker">TapTap制造</button>
           <button type="button" class="rank-board" data-board="summary">汇总</button>
         </div>
         <div class="rank-meta">
@@ -128,6 +129,7 @@
         </div>
       </div>
 
+      <div class="rank-tags" id="rank-tags"></div>
       <div class="rank-search">
         <input type="text" id="rank-search-input" placeholder="搜索榜单内任意游戏（名称或 APP ID），回车查看详情" autocomplete="off" spellcheck="false">
         <button type="button" class="rank-search-btn" id="rank-search-btn">搜索</button>
@@ -137,8 +139,7 @@
       <div class="rank-list" id="rank-list"><div class="loading-tip">榜单加载中...</div></div>
       <div class="rank-summary" id="rank-summary" hidden></div>
 
-      <div class="rank-detail" id="rank-detail" hidden>
-        <div class="rank-detail-head">
+      <div class="rank-detail" id="rank-detail" hidden>        <div class="rank-detail-head">
           <button type="button" class="rank-detail-close" id="rank-detail-close">×</button>
           <img id="rank-detail-icon" class="rank-detail-icon" alt="">
           <div class="rank-detail-info">
@@ -149,6 +150,16 @@
         <div class="rank-detail-stats" id="rank-detail-stats"></div>
         <div class="rank-detail-chart" id="rank-detail-chart"></div>
         <div class="rank-detail-note">趋势来自本机每小时快照，开启软件时自动记录</div>
+      </div>
+
+      <!-- 回顶 / 到底（线性图标） -->
+      <div class="rank-scroll-btns" id="rank-scroll-btns">
+        <button type="button" class="rank-scroll-btn" id="rank-scroll-top" title="回到顶部" aria-label="回到顶部">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/><line x1="5" y1="21" x2="19" y2="21"/></svg>
+        </button>
+        <button type="button" class="rank-scroll-btn" id="rank-scroll-bottom" title="到底部" aria-label="到底部">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/><line x1="5" y1="3" x2="19" y2="3"/></svg>
+        </button>
       </div>
     </div><!-- /#view-rank -->
 
@@ -196,7 +207,7 @@
             </div>
             <div class="settings-row">
               <span class="settings-row-label">收益刮刮乐
-                <span class="settings-row-hint">开启后顶部收益默认被遮住，用鼠标刮开查看</span>
+                <span class="settings-row-hint">开启后「昨日广告收益」整块被涂层遮住，滑动刮开才能看到</span>
               </span>
               <label class="switch">
                 <input type="checkbox" id="scratch-toggle">

@@ -1498,7 +1498,28 @@ html.explorer-on .api-panel { display: block; }
 .op-badge.muted { color: var(--text-tertiary); }
 
 /* ==================== 收益刮刮乐 ==================== */
+.stat-tile { position: relative; overflow: hidden; }
 .stat-tile-value { position: relative; }
-.scratch-canvas { position: absolute; left: 0; top: 0; border-radius: 6px; cursor: crosshair; touch-action: none; transition: opacity .25s ease; z-index: 2; }
+.scratch-canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border-radius: inherit; cursor: crosshair; touch-action: none; transition: opacity .25s ease; z-index: 5; }
 .scratch-canvas.is-done { opacity: 0; }
 .settings-row-hint { display: block; font-size: 11px; color: var(--text-tertiary); font-weight: 400; margin-top: 2px; }
+
+/* ==================== 榜单滚动按钮 ==================== */
+.rank-scroll-btns { position: fixed; right: 26px; bottom: 26px; display: flex; flex-direction: column; gap: 8px; z-index: 40; }
+.rank-scroll-btn { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border-light); background: var(--bg-card); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(6px); transition: all .2s; box-shadow: var(--shadow-card); }
+.rank-scroll-btn svg { width: 17px; height: 17px; }
+.rank-scroll-btn.is-show { opacity: .55; pointer-events: auto; transform: none; }
+.rank-scroll-btn.is-show:hover { opacity: 1; color: var(--taptap-cyan); border-color: var(--taptap-cyan); }
+.rank-scroll-btn.is-hint { opacity: .95; color: var(--taptap-cyan); }
+
+/* 汇总行图标 */
+.rank-sum-icon { width: 22px; height: 22px; border-radius: 5px; object-fit: cover; flex: 0 0 22px; background: var(--bg-muted); }
+/* 详情就地展开时间距 */
+.rank-detail { margin: 8px 0 10px; }
+
+/* ==================== 榜单标签筛选 ==================== */
+.rank-tags { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.rank-tags::-webkit-scrollbar { display: none; }
+.rank-tag { flex: 0 0 auto; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border-light); background: var(--bg-card); color: var(--text-secondary); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; transition: all .15s; white-space: nowrap; }
+.rank-tag:hover { color: var(--taptap-cyan); border-color: var(--taptap-cyan); }
+.rank-tag.is-active { background: var(--taptap-cyan); border-color: var(--taptap-cyan); color: #fff; }
