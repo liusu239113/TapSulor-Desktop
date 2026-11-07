@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.2';
-const VERSION_CODE = 2;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.3';
+const VERSION_CODE = 3;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
 const UPDATE_UA = `TapSulor/${APP_VERSION} (Windows)`;
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -838,15 +838,31 @@ async function fetchJsonWithSession(url) {
 
 // 写接口（提现、签约检查）必须 POST + CSRF 头 X-DC-XSRF-TOKEN
 async function xsrfToken() {
+  const read = async () => {
+    try {
+      const list = await session.defaultSession.cookies.get({ name: 'DC_XSRF_TOKEN' });
+      const raw = list && list[0] && list[0].value;
+      if (!raw) return '';
+      try { return decodeURIComponent(raw); } catch (_) { return raw; }
+    } catch (_) { return ''; }
+  };
+  let token = await read();
+  if (token) return token;
+  // 主进程里若还没种下 CSRF cookie，先访问一次站点首页把它种上
   try {
-    const list = await session.defaultSession.cookies.get({ name: 'DC_XSRF_TOKEN' });
-    const raw = list && list[0] && list[0].value;
-    if (!raw) return '';
-    try { return decodeURIComponent(raw); } catch (_) { return raw; }
-  } catch (_) { return ''; }
+    await net.fetch('https://developer.taptap.cn/v3/', {
+      headers: { 'User-Agent': DESKTOP_UA, 'Accept': 'text/html,application/xhtml+xml' },
+    });
+    token = await read();
+    appLog('[csrf] 首页种 cookie 后令牌:', token ? 'ok' : 'MISSING');
+  } catch (e) {
+    appLog('[csrf] 种 cookie 失败:', String(e).slice(0, 100));
+  }
+  return token;
 }
 async function postJsonWithCsrf(url) {
   const token = await xsrfToken();
+  if (!token) appLog('[csrf] 缺少 DC_XSRF_TOKEN，写接口可能被拒:', url.slice(0, 80));
   const resp = await net.fetch(url, {
     method: 'POST',
     headers: {
@@ -1125,7 +1141,7 @@ async function fetchUpdateInfo() {
     const response = await net.fetch(UPDATE_URL, {
       headers: { 'User-Agent': UPDATE_UA, 'Accept': 'application/json' },
     });
-    if (!response.ok) return null;
+    if (!response.ok) { appLog('[update] HTTP', response.status); return null; }
     const json = await response.json();
     if (!json) return null;
     // 线上 version.json 按平台分层：{ android: {...}, windows: {...}, admin: {...} }
@@ -1133,7 +1149,7 @@ async function fetchUpdateInfo() {
     appLog('[update] version.json:', JSON.stringify(picked).slice(0, 200));
     return picked;
   } catch (err) {
-    console.error('[update] fetch error:', err.message);
+    appLog('[update] fetch error:', String(err.message || err).slice(0, 120));
     return null;
   }
 }
