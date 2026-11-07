@@ -708,6 +708,8 @@
     renderAmount('summary-today', todayGot.map(g => g.todayRevenue), 600);
     renderAmount('summary-month', monthGot.map(g => g.monthRevenue), 600);
     renderAmount('summary-total', totalGot.map(g => g.totalRevenue), 800);
+    // 刮刮乐：数值刷新后重新盖上遮罩
+    if (window.ScratchMode) setTimeout(() => window.ScratchMode.remark(), 900);
 
     // 汇总区"日均 / 月末预估"（按日期聚合所有已拉取到本月日流水的游戏）
     const avgEl = document.getElementById('summary-month-avg');
@@ -1585,6 +1587,16 @@
         soundEnabled = enabled;
         try { localStorage.setItem(SOUND_KEY, enabled ? '1' : '0'); } catch (_) {}
         if (enabled) playSfx('click'); // 开启时播放确认音
+      });
+    }
+
+    // 收益刮刮乐开关（默认关闭）
+    const scratchToggle = document.getElementById('scratch-toggle');
+    if (scratchToggle && window.ScratchMode) {
+      scratchToggle.checked = window.ScratchMode.enabled();
+      scratchToggle.addEventListener('change', () => {
+        window.ScratchMode.setEnabled(scratchToggle.checked);
+        playSfx('click');
       });
     }
 

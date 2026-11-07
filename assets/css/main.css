@@ -1496,3 +1496,9 @@ html.explorer-on .api-panel { display: block; }
 .op-badge.warn { background: rgba(239, 68, 68, .12); color: #ef4444; }
 .op-badge.credit { background: rgba(37, 182, 233, .12); color: var(--taptap-cyan); }
 .op-badge.muted { color: var(--text-tertiary); }
+
+/* ==================== 收益刮刮乐 ==================== */
+.stat-tile-value { position: relative; }
+.scratch-canvas { position: absolute; left: 0; top: 0; border-radius: 6px; cursor: crosshair; touch-action: none; transition: opacity .25s ease; z-index: 2; }
+.scratch-canvas.is-done { opacity: 0; }
+.settings-row-hint { display: block; font-size: 11px; color: var(--text-tertiary); font-weight: 400; margin-top: 2px; }
