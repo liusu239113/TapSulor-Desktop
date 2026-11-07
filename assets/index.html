@@ -69,6 +69,7 @@
         </div>
         <div class="stat-tile-value" id="summary-total">¥0.00</div>
         <div class="stat-tile-meta" id="summary-total-meta">等待数据同步</div>
+        <button type="button" class="withdraw-all-btn" id="withdraw-all-btn" hidden>一键提现</button>
       </div>
       <div class="stat-tile stat-tile-yesterday">
         <div class="stat-tile-head">
@@ -162,6 +163,25 @@
         </button>
       </div>
     </div><!-- /#view-rank -->
+
+    <!-- ===== 一键提现弹窗 ===== -->
+    <div class="withdraw-modal" id="withdraw-modal" hidden>
+      <div class="withdraw-overlay" id="withdraw-overlay"></div>
+      <div class="withdraw-panel">
+        <header class="withdraw-head">
+          <h3>一键提现</h3>
+          <button type="button" class="withdraw-close" id="withdraw-close">×</button>
+        </header>
+        <p class="withdraw-desc">逐个游戏按<strong>全部可提现余额</strong>发起提现，每月 28 日更新上月收益；提交后不可撤销。</p>
+        <div class="withdraw-summary" id="withdraw-summary">正在查询各游戏余额…</div>
+        <div class="withdraw-list" id="withdraw-list"></div>
+        <p class="withdraw-note" id="withdraw-note">最低提现 5 元/笔；余额不足的游戏会自动跳过。</p>
+        <footer class="withdraw-foot">
+          <button type="button" class="withdraw-btn ghost" id="withdraw-cancel">取消</button>
+          <button type="button" class="withdraw-btn primary" id="withdraw-confirm" disabled>确认提现</button>
+        </footer>
+      </div>
+    </div>
 
     <!-- ===== 设置面板 ===== -->
     <div class="settings-modal" id="settings-modal" hidden>

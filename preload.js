@@ -39,6 +39,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 开发者信用等级 + 认证状态（随账号/工作室切换重新调用） */
   developerBadges: (developerId) => ipcRenderer.invoke('bridge:developerBadges', developerId),
 
+  // ========== 一键提现（先预览，再执行） ==========
+  /** 预览：返回所有游戏的可提现余额 */
+  withdrawPreview: () => ipcRenderer.invoke('bridge:withdrawPreview'),
+  /** 执行：传 appId 数组，逐个按全额发起提现 */
+  withdrawExecute: (appIds) => ipcRenderer.invoke('bridge:withdrawExecute', appIds),
+
   /** 检查登录状态：返回 Promise<{status, developerId, profile, studios, ...}> */
   checkLogin: () => ipcRenderer.invoke('bridge:checkLogin'),
 

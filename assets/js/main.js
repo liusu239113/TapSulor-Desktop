@@ -961,6 +961,131 @@
 
   // 主页面「查任意 APP ID」入口已移除（输入任意 ID 查看他人数据的功能下线）
 
+  // ====== 一键提现 ======
+  const wdModal = document.getElementById('withdraw-modal');
+  let wdItems = [];
+
+  function openWithdrawModal() {
+    if (!wdModal) return;
+    wdModal.hidden = false;
+    const summary = document.getElementById('withdraw-summary');
+    const list = document.getElementById('withdraw-list');
+    const confirmBtn = document.getElementById('withdraw-confirm');
+    const note = document.getElementById('withdraw-note');
+    summary.textContent = '正在查询各游戏余额…';
+    list.innerHTML = '';
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '确认提现';
+    note.textContent = '最低提现 5 元/笔；余额不足的游戏会自动跳过。';
+
+    const api = window.electronAPI;
+    if (!api || typeof api.withdrawPreview !== 'function') {
+      summary.textContent = '当前端暂不支持一键提现';
+      return;
+    }
+    api.withdrawPreview().then((res) => {
+      if (!res || !res.ok) {
+        summary.textContent = '查询失败：' + ((res && res.error) || '未知错误');
+        return;
+      }
+      wdItems = (res.items || []).filter(i => i.balance != null && i.balance > 0);
+      const eligible = wdItems.filter(i => i.eligible);
+      if (!wdItems.length) {
+        summary.textContent = '当前厂商下没有可提现余额';
+        return;
+      }
+      summary.innerHTML = '可提现游戏 <b>' + eligible.length + '</b> 个 · 合计 <b>¥' + (res.total || 0).toFixed(2) + '</b>';
+      list.innerHTML = wdItems.map(i =>
+        '<div class="withdraw-row' + (i.eligible ? '' : ' is-disabled') + '">' +
+          '<span class="withdraw-row-title">' + String(i.title || i.appId).replace(/[<>&]/g, '') + '</span>' +
+          '<span class="withdraw-row-balance">¥' + (i.balance || 0).toFixed(2) + '</span>' +
+          '<span class="withdraw-row-state">' + (i.eligible ? '可提现' : '不足 5 元') + '</span>' +
+        '</div>'
+      ).join('');
+      confirmBtn.disabled = eligible.length === 0;
+      confirmBtn.textContent = eligible.length ? ('确认提现 ' + eligible.length + ' 个游戏') : '无可提现游戏';
+    }).catch((e) => {
+      summary.textContent = '查询失败：' + (e.message || e);
+    });
+  }
+
+  let wdArmed = false;
+  let wdArmTimer = null;
+
+  async function executeWithdraw() {
+    const confirmBtn = document.getElementById('withdraw-confirm');
+    const note = document.getElementById('withdraw-note');
+    const eligible = wdItems.filter(i => i.eligible);
+    if (!eligible.length) return;
+    const total = eligible.reduce((s, i) => s + (i.balance || 0), 0);
+
+    // 二次确认：第一次点击只“上膛”，10 秒内再点才真正提交
+    if (!wdArmed) {
+      wdArmed = true;
+      confirmBtn.textContent = '再次点击确认 ¥' + total.toFixed(2);
+      note.textContent = '提交后不可撤销。10 秒内再次点击按钮即发起提现，超时自动取消。';
+      clearTimeout(wdArmTimer);
+      wdArmTimer = setTimeout(() => {
+        wdArmed = false;
+        confirmBtn.textContent = '确认提现 ' + eligible.length + ' 个游戏';
+        note.textContent = '最低提现 5 元/笔；余额不足的游戏会自动跳过。';
+      }, 10000);
+      return;
+    }
+    clearTimeout(wdArmTimer);
+    wdArmed = false;
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '提现中…';
+    note.textContent = '正在逐个提交，请勿关闭窗口…';
+    try {
+      const res = await window.electronAPI.withdrawExecute(eligible.map(i => i.appId));
+      const results = (res && res.results) || [];
+      const okCount = results.filter(r => r.ok).length;
+      const failList = results.filter(r => !r.ok);
+      document.getElementById('withdraw-summary').innerHTML =
+        '成功 <b>' + okCount + '</b> / ' + results.length + ' 笔' + (failList.length ? '，失败 ' + failList.length + ' 笔' : '');
+      document.getElementById('withdraw-list').innerHTML = results.map(r => {
+        const item = wdItems.find(i => String(i.appId) === String(r.appId)) || {};
+        return '<div class="withdraw-row">' +
+          '<span class="withdraw-row-title">' + String(item.title || r.appId) + '</span>' +
+          '<span class="withdraw-row-balance">¥' + (r.amount != null ? Number(r.amount).toFixed(2) : '—') + '</span>' +
+          '<span class="withdraw-row-state ' + (r.ok ? 'ok' : 'fail') + '">' + (r.ok ? '已提交' : (r.msg || r.error || '失败')) + '</span>' +
+        '</div>';
+      }).join('');
+      note.textContent = '提现结果以 TapTap 后台为准；可在各游戏广告变现页核对“提现中金额”。';
+      confirmBtn.textContent = '完成';
+      confirmBtn.disabled = false;
+      confirmBtn.onclick = closeWithdrawModal;
+    } catch (e) {
+      note.textContent = '提交失败：' + (e.message || e);
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '重试';
+    }
+  }
+
+  function closeWithdrawModal() {
+    if (wdModal) wdModal.hidden = true;
+    const confirmBtn = document.getElementById('withdraw-confirm');
+    if (confirmBtn) { confirmBtn.onclick = executeWithdraw; confirmBtn.disabled = false; }
+  }
+
+  function wireWithdraw() {
+    const btn = document.getElementById('withdraw-all-btn');
+    if (btn) {
+      btn.hidden = false;
+      btn.addEventListener('click', openWithdrawModal);
+    }
+    const close = document.getElementById('withdraw-close');
+    const cancel = document.getElementById('withdraw-cancel');
+    const overlay = document.getElementById('withdraw-overlay');
+    const confirm = document.getElementById('withdraw-confirm');
+    if (close) close.addEventListener('click', closeWithdrawModal);
+    if (cancel) cancel.addEventListener('click', closeWithdrawModal);
+    if (overlay) overlay.addEventListener('click', closeWithdrawModal);
+    if (confirm) confirm.addEventListener('click', executeWithdraw);
+  }
+
   function renderAll() {
     const games = getVisibleGames();
     renderSummary(games);
@@ -970,6 +1095,7 @@
   // ========== 初始化 ==========
   async function init() {
     renderAll();
+    wireWithdraw();
 
     if (!isElectron) {
       const boot = document.getElementById('auth-boot');
