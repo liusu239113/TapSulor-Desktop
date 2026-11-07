@@ -997,7 +997,11 @@
       }
       summary.innerHTML =
         '激励计划可提现 <b>' + (res.eligibleCount || 0) + '</b> 个游戏 · 合计 <b>¥' + (res.total || 0).toFixed(2) + '</b>' +
-        '<span class="withdraw-min">最低 100 元/笔</span>';
+        '<span class="withdraw-min">最低 100 元/笔</span>' +
+        '<div class="withdraw-status">' +
+          '提现签约：<b>' + (res.contractState === 'SIGNED' ? '已签约' : (res.contractState === 'NOT_REQUIRED' ? '无需签约' : (res.contractState || '未知'))) + '</b>' +
+          ' · 激励计划参与：<b>' + (res.enrolledCount || 0) + '</b>/' + (res.checkedCount || 0) + ' 个游戏' +
+        '</div>';
       list.innerHTML = wdItems.map(i => {
         const a = Number.isFinite(i.auto) ? i.auto : 0;
         const state = i.eligible ? '可提现' : '未满 100 元';
@@ -1087,12 +1091,20 @@
     const overlay = document.getElementById('withdraw-overlay');
     const confirm = document.getElementById('withdraw-confirm');
     const refresh = document.getElementById('withdraw-refresh');
+    const statusBtn = document.getElementById('withdraw-status');
     if (close) close.addEventListener('click', closeWithdrawModal);
     if (cancel) cancel.addEventListener('click', closeWithdrawModal);
     if (overlay) overlay.addEventListener('click', closeWithdrawModal);
     if (refresh) refresh.addEventListener('click', () => {
       const b = document.getElementById('withdraw-confirm');
       if (b) { b.onclick = executeWithdraw; b.disabled = false; b.textContent = '确认提现'; }
+      openWithdrawModal();
+    });
+    if (statusBtn) statusBtn.addEventListener('click', () => {
+      const b = document.getElementById('withdraw-confirm');
+      if (b) { b.onclick = executeWithdraw; b.disabled = false; }
+      const note = document.getElementById('withdraw-note');
+      if (note) note.textContent = '正在重新检查签约状态与激励计划参与状态…';
       openWithdrawModal();
     });
     if (confirm) confirm.addEventListener('click', executeWithdraw);

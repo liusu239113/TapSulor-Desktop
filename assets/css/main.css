@@ -1566,3 +1566,5 @@ html.explorer-on .api-panel { display: block; }
 .wd-tag.ok { background: rgba(16,185,129,.14); color: #10b981; }
 .wd-tag.dim { opacity: .75; }
 .withdraw-min { margin-left: 8px; font-size: 11px; color: var(--text-tertiary); font-weight: 400; }
+.withdraw-status { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+.withdraw-status b { color: var(--text-primary); }

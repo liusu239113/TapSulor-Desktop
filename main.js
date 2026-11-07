@@ -836,6 +836,33 @@ async function fetchJsonWithSession(url) {
   return { status: resp.status, json };
 }
 
+// 写接口（提现、签约检查）必须 POST + CSRF 头 X-DC-XSRF-TOKEN
+async function xsrfToken() {
+  try {
+    const list = await session.defaultSession.cookies.get({ name: 'DC_XSRF_TOKEN' });
+    const raw = list && list[0] && list[0].value;
+    if (!raw) return '';
+    try { return decodeURIComponent(raw); } catch (_) { return raw; }
+  } catch (_) { return ''; }
+}
+async function postJsonWithCsrf(url) {
+  const token = await xsrfToken();
+  const resp = await net.fetch(url, {
+    method: 'POST',
+    headers: {
+      'User-Agent': DESKTOP_UA,
+      'Referer': TAPTAP_REFERER,
+      'Accept': 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
+      'X-DC-XSRF-TOKEN': token,
+    },
+    body: '{}',
+  });
+  let json = null;
+  try { json = await resp.json(); } catch (_) {}
+  return { status: resp.status, json };
+}
+
 // 预览：列出当前厂商下各游戏的「激励计划（AUTO_V1）」可提现现金
 // 最低提现 100 元；余额为 0 的游戏不展示
 ipcMain.handle('bridge:withdrawPreview', async () => {
@@ -860,19 +887,36 @@ ipcMain.handle('bridge:withdrawPreview', async () => {
           if (d) {
             row.auto = d.withdrawable_cash_fen != null ? Number(d.withdrawable_cash_fen) / 100 : (Number(d.balance) || 0);
             row.withdrawing = Number(d.withdrawing_cash_fen || 0) / 100;
+            row.status = Number(d.status);
             row.blocked = !!d.withdrawal_blocked;
             row.blockedReason = d.blocked_reason || '';
           }
         } catch (_) {}
-        row.eligible = Number.isFinite(row.auto) && row.auto >= 100;
+        try {
+          const g = await fetchJsonWithSession(`https://developer.taptap.cn/api/mini-app/v1/incentive/game?app_id=${app.id}&developer_id=${developerId}`);
+          const gd = g.json && g.json.data;
+          if (gd) row.enrollment = gd.enrollment_state || null;
+        } catch (_) {}
+        row.eligible = Number.isFinite(row.auto) && row.auto >= 100 &&
+          (row.status == null || row.status === 1) && !row.blocked &&
+          (!row.enrollment || row.enrollment === 'active');
         items.push(row);
       }
     };
     await Promise.all([worker(), worker(), worker(), worker()]);
+
+    // 签约状态（用第一个已上线游戏检查，签约是厂商级）
+    let contractState = null;
+    if (published.length) {
+      try {
+        const ck = await postJsonWithCsrf(`https://developer.taptap.cn/api/mini-app/v1/ad/withdraw-contract/check?developer_id=${encodeURIComponent(developerId)}&app_id=${published[0].id}`);
+        contractState = (ck.json && ck.json.data && ck.json.data.state) || null;
+      } catch (_) {}
+    }
     items.sort((a, b) => (b.auto || 0) - (a.auto || 0));
     const withCash = items.filter(i => (i.auto || 0) > 0);
     const total = items.filter(i => i.eligible).reduce((s, i) => s + (i.auto || 0), 0);
-    appLog('[withdraw] 预览 developer =', developerId, '激励计划可提 =', total.toFixed(2), '有余额游戏 =', withCash.length);
+    appLog('[withdraw] 预览 developer =', developerId, '激励计划可提 =', total.toFixed(2), '签约 =', contractState, '有余额游戏 =', withCash.length);
     return {
       ok: true,
       developerId,
@@ -880,6 +924,9 @@ ipcMain.handle('bridge:withdrawPreview', async () => {
       total: Number(total.toFixed(2)),
       eligibleCount: items.filter(i => i.eligible).length,
       minAmount: 100,
+      contractState,
+      enrolledCount: items.filter(i => i.enrollment === 'active').length,
+      checkedCount: items.length,
     };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -899,22 +946,48 @@ ipcMain.handle('bridge:withdrawExecute', async (event, appIds) => {
 
     for (const appId of ids) {
       try {
-        // 执行前重新取一次余额
-        const info = await fetchJsonWithSession(`https://developer.taptap.cn/api/mini-app/v1/ad/withdraw-info?app_id=${appId}&developer_id=${developerId}&settlement_scheme=AUTO_V1`);
-        const d = info.json && info.json.data;
-        const amount = d && d.withdrawable_cash_fen != null ? Number(d.withdrawable_cash_fen) / 100 : (d ? Number(d.balance) : NaN);
-        if (!Number.isFinite(amount) || amount < 100) {
-          results.push({ appId, ok: false, error: '余额不足 100 元或已变化', amount: Number.isFinite(amount) ? amount : null });
+        // 1) 签约检查（未签约无法提现）
+        const ck = await postJsonWithCsrf(`https://developer.taptap.cn/api/mini-app/v1/ad/withdraw-contract/check?developer_id=${encodeURIComponent(developerId)}&app_id=${encodeURIComponent(appId)}`);
+        const state = ck.json && ck.json.data && ck.json.data.state;
+        if (ck.status === 403) {
+          results.push({ appId, ok: false, error: '登录态已过期，请重新登录后再试' });
           continue;
         }
+        if (state && state !== 'SIGNED' && state !== 'NOT_REQUIRED') {
+          results.push({ appId, ok: false, error: '未完成提现签约（' + state + '），请先在后台完成签约' });
+          continue;
+        }
+
+        // 2) 重新取一次激励计划余额（单位：分）
+        const info = await fetchJsonWithSession(`https://developer.taptap.cn/api/mini-app/v1/ad/withdraw-info?app_id=${appId}&developer_id=${developerId}&settlement_scheme=AUTO_V1`);
+        const d = info.json && info.json.data;
+        const fen = d && d.withdrawable_cash_fen != null ? Number(d.withdrawable_cash_fen) : NaN;
+        const status = d ? Number(d.status) : null;
+        const blocked = !!(d && d.withdrawal_blocked);
+        const amountYuan = Number.isFinite(fen) ? fen / 100 : null;
+
+        if (!Number.isFinite(fen) || fen < 10000) {
+          results.push({ appId, ok: false, error: '可提现金额不足 100 元或已变化', amount: amountYuan });
+          continue;
+        }
+        if (status !== null && status !== 1) {
+          results.push({ appId, ok: false, error: '当前状态不可提现（status=' + status + '）', amount: amountYuan });
+          continue;
+        }
+        if (blocked) {
+          results.push({ appId, ok: false, error: '提现被平台限制：' + ((d && d.blocked_reason) || '未知原因'), amount: amountYuan });
+          continue;
+        }
+
+        // 3) 发起提现：POST，amount 单位为「分」的整数
         const key = require('crypto').randomUUID();
-        const q = `app_id=${encodeURIComponent(appId)}&amount=${encodeURIComponent(amount.toFixed(2))}` +
+        const q = `app_id=${encodeURIComponent(appId)}&amount=${fen}` +
           `&developer_id=${encodeURIComponent(developerId)}&idempotency_key=${encodeURIComponent(key)}&settlement_scheme=AUTO_V1`;
-        const r = await fetchJsonWithSession(`https://developer.taptap.cn/api/mini-app/v1/ad/payout-report-confirm?${q}`);
+        const r = await postJsonWithCsrf(`https://developer.taptap.cn/api/mini-app/v1/ad/payout-report-confirm?${q}`);
         const ok = !!(r.json && r.json.success);
         const msg = (r.json && r.json.data && (r.json.data.msg || r.json.data.error_description)) || (ok ? '已提交' : ('HTTP ' + r.status));
-        results.push({ appId, ok, amount, msg, status: r.status });
-        appLog('[withdraw]', appId, 'AUTO_V1 amount =', amount, '->', ok ? 'OK' : ('FAIL ' + msg));
+        results.push({ appId, ok, amount: amountYuan, msg, status: r.status });
+        appLog('[withdraw]', appId, 'amount(fen) =', fen, '->', ok ? 'OK' : ('FAIL ' + msg));
         await new Promise(res => setTimeout(res, 600));
       } catch (err) {
         results.push({ appId, ok: false, error: err.message });
