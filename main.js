@@ -522,8 +522,13 @@ async function getRepToken() {
   try {
     // 直接打开控制台 URL：rep.taptap.cn 根路径是营销落地页，不会触发 SSO；
     // 控制台 URL 会静默走 TapTap 授权并写入 op-jwt-token
-    const developerId = activeDeveloperId || '';
-    await win.loadURL('https://rep.taptap.cn/' + developerId + '/');
+    let consoleDevId = activeDeveloperId;
+    if (!consoleDevId) {
+      for (const acc of accounts.accounts || []) { consoleDevId = acc.activeDeveloperId || acc.developerId; if (consoleDevId) break; }
+    }
+    const consoleUrl = consoleDevId ? ('https://rep.taptap.cn/' + consoleDevId + '/') : 'https://rep.taptap.cn/';
+    await win.loadURL(consoleUrl);
+    appLog('[rep] 打开', consoleUrl);
     // SSO 静默跳转完成后令牌会写入 localStorage，轮询等待其出现（最多 40s）
     const token = await new Promise((resolve) => {
       let tries = 0;
@@ -565,24 +570,43 @@ ipcMain.handle('bridge:repRevenue', async (event, appId) => {
   try {
     const token = await getRepToken();
     if (!token) return { ok: false, status: 0, body: null, error: 'REP_TOKEN_FAIL' };
-    const developerId = activeDeveloperId || '';
-    const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
-      method: 'GET',
-      headers: {
-        'Authorization': token,
-        'x-app-id': String(appId),
-        'x-developer-id': String(developerId),
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': DESKTOP_UA,
-        'Referer': 'https://rep.taptap.cn/',
-      },
-    });
-    const body = await response.text();
-    // 令牌失效时清缓存，下次调用重新走 SSO 获取
-    if (response.status === 401 || response.status === 403) {
-      repTokenCache = { token: null, fetchedAt: 0 };
+
+    // REP 数据按 (app_id, developer_id) 授权，且当前登录账号可能不是拥有该游戏的厂商；
+    // 依次尝试本地已知的所有厂商 ID，取第一个有权限的
+    const candidates = [];
+    const push = (id) => { if (id && !candidates.includes(String(id))) candidates.push(String(id)); };
+    push(activeDeveloperId);
+    for (const acc of accounts.accounts || []) {
+      push(acc.activeDeveloperId);
+      push(acc.developerId);
+      for (const s of acc.studios || []) push(s.id);
     }
-    return { ok: response.ok, status: response.status, body, error: null };
+
+    let last = null;
+    for (const developerId of candidates) {
+      const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
+        method: 'GET',
+        headers: {
+          'Authorization': token,
+          'x-app-id': String(appId),
+          'x-developer-id': developerId,
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': DESKTOP_UA,
+          'Referer': 'https://rep.taptap.cn/',
+        },
+      });
+      const body = await response.text();
+      if (response.status === 401 || response.status === 403) {
+        repTokenCache = { token: null, fetchedAt: 0 };
+      }
+      if (response.ok) {
+        appLog('[rep] revenue ok, developer_id =', developerId, 'app_id =', appId);
+        return { ok: true, status: response.status, body, error: null, developerId };
+      }
+      appLog('[rep] revenue fail, developer_id =', developerId, 'status =', response.status, String(body).slice(0, 120));
+      last = { ok: false, status: response.status, body, error: null };
+    }
+    return last || { ok: false, status: 0, body: null, error: 'REP_NO_DEV_ID' };
   } catch (err) {
     return { ok: false, status: 0, body: null, error: err.message };
   }
