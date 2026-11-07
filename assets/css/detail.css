@@ -783,11 +783,11 @@
 .trend-tip b { font-weight: 600; margin-right: 5px; }
 
 /* 日历 / 趋势 / REP 分段切换 */
-.view-switch { position: relative; display: flex; width: fit-content; margin: 4px auto 12px; background: var(--bg-muted); border-radius: 999px; padding: 3px; }
+.view-switch { position: relative; display: flex; width: 300px; margin: 4px auto 12px; background: var(--bg-muted); border-radius: 999px; padding: 3px; }
 .view-switch .vs-thumb { position: absolute; top: 3px; left: 3px; width: calc(33.333% - 2px); height: calc(100% - 6px); background: var(--bg-card); border-radius: 999px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); transition: transform .28s cubic-bezier(.4,0,.2,1); }
 .view-switch.is-trend .vs-thumb { transform: translateX(100%); }
 .view-switch.is-rep .vs-thumb { transform: translateX(200%); }
-.vs-btn { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 1; min-width: 88px; border: none; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary, #6b7280); padding: 7px 20px; border-radius: 999px; transition: color .2s; }
+.vs-btn { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: 1 1 0; min-width: 0; border: none; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary, #6b7280); padding: 7px 4px; border-radius: 999px; transition: color .2s; }
 
 /* REP 平台收益卡片 */
 .rep-card { background: var(--bg-card); border: 1px solid var(--border, rgba(0,0,0,0.08)); border-radius: 14px; padding: 14px; margin: 0 auto 14px; max-width: 760px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }

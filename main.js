@@ -521,20 +521,37 @@ async function getRepToken() {
   });
   try {
     await win.loadURL('https://rep.taptap.cn/');
-    // SSO 静默跳转完成后令牌会写入 localStorage，轮询等待其出现（最多 20s）
+    // SSO 静默跳转完成后令牌会写入 localStorage，轮询等待其出现（最多 40s）
     const token = await new Promise((resolve) => {
       let tries = 0;
       const timer = setInterval(async () => {
         tries += 1;
         try {
-          const t = await win.webContents.executeJavaScript('localStorage.getItem("op-jwt-token") || null');
-          if (t) { clearInterval(timer); resolve(t); return; }
-        } catch (_) { /* 页面跳转中 executeJavaScript 可能短暂失败，忽略 */ }
-        if (tries >= 40) { clearInterval(timer); resolve(null); }
+          const info = await win.webContents.executeJavaScript(`(() => ({
+            token: localStorage.getItem("op-jwt-token") || null,
+            url: location.href,
+            keys: Object.keys(localStorage),
+            text: document.body ? document.body.innerText.slice(0, 200) : ''
+          }))()`);
+          if (info.token) { clearInterval(timer); resolve(info.token); return; }
+          if (tries % 8 === 0) {
+            appLog('[rep] 等待令牌中... url =', String(info.url).slice(0, 100), '| keys =', info.keys.join(',').slice(0, 120), '| text =', info.text.replace(/\n/g, ' ').slice(0, 80));
+          }
+          // 若停在授权确认页，自动点击确认按钮
+          if (/authorize|consent|授权|同意/.test(info.text) || /authorize/.test(info.url)) {
+            await win.webContents.executeJavaScript(`(() => {
+              const btns = [...document.querySelectorAll('button, a')];
+              const b = btns.find(x => /确认|授权|同意|允许/.test(x.innerText || ''));
+              if (b) { b.click(); return 'clicked:' + (b.innerText || '').slice(0, 20); }
+              return 'no-button';
+            })()`).then(r => { if (r !== 'no-button') appLog('[rep] 自动点击授权:', r); }).catch(() => {});
+          }
+        } catch (_) { /* 跳转过程中 executeJavaScript 可能短暂失败 */ }
+        if (tries >= 80) { clearInterval(timer); resolve(null); }
       }, 500);
     });
     if (token) repTokenCache = { token, fetchedAt: Date.now() };
-    appLog('[rep] token fetch:', token ? 'ok' : 'FAILED');
+    appLog('[rep] token fetch:', token ? 'ok' : 'FAILED (40s 内未在 rep.taptap.cn 拿到令牌，可能需要手动打开 REP 后台确认一次授权)');
     return token;
   } finally {
     try { win.destroy(); } catch (_) {}
