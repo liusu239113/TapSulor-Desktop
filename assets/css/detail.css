@@ -791,7 +791,9 @@
 
 /* REP 平台收益卡片 */
 .rep-card { background: var(--bg-card); border: 1px solid var(--border, rgba(0,0,0,0.08)); border-radius: 14px; padding: 14px; margin: 0 auto 14px; max-width: 760px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
-.rep-title { font-weight: 700; margin-bottom: 10px; }
+.rep-title { font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.rep-refresh { margin-left: auto; border: 1px solid var(--border, rgba(0,0,0,0.12)); background: transparent; color: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; cursor: pointer; opacity: .8; }
+.rep-refresh:hover { opacity: 1; }
 .rep-unit { font-size: 12px; color: var(--text-secondary, #6b7280); font-weight: 400; margin-left: 6px; }
 .rep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .rep-tile { background: var(--bg-muted); border-radius: 10px; padding: 10px 12px; }
@@ -819,7 +821,6 @@
 .trend-focus.on { opacity: 1; }
 
 /* ========== APP ID 切换栏 ========== */
-.appid-switch {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -830,13 +831,11 @@
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 10px;
 }
-.appid-switch-label {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: .04em;
   color: var(--text-secondary, #6b7280);
 }
-.appid-switch input {
   flex: 1 1 220px;
   min-width: 160px;
   height: 34px;
@@ -848,8 +847,6 @@
   border-radius: 8px;
   outline: none;
 }
-.appid-switch input:focus { border-color: var(--accent, #25B6E9); }
-.appid-switch-btn {
   height: 34px;
   padding: 0 16px;
   font-size: 13px;
@@ -860,9 +857,6 @@
   border-radius: 8px;
   cursor: pointer;
 }
-.appid-switch-btn:hover { filter: brightness(1.05); }
-.appid-switch-btn:active { transform: translateY(1px); }
-.appid-switch-hint {
   flex-basis: 100%;
   font-size: 11px;
   line-height: 1.4;

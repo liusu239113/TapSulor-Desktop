@@ -22,8 +22,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetch: (url) => ipcRenderer.invoke('bridge:fetch', url),
 
   /** REP 平台收益（rep.taptap.cn）：传入 appId，返回 Promise<{ok, status, body, error}>
-   *  body 为 JSON 字符串，金额单位为「分」（除以 100 得元）。SSO 自动登录，无需用户操作。 */
-  repRevenue: (appId) => ipcRenderer.invoke('bridge:repRevenue', appId),
+   *  body 为 JSON 字符串，金额单位为「分」（除以 100 得元）。SSO 自动登录，无需用户操作。
+   *  opts.force = true 时丢弃令牌缓存并重新获取（用于刷新按钮）。 */
+  repRevenue: (appId, opts) => ipcRenderer.invoke('bridge:repRevenue', appId, opts || {}),
+
+  // ========== 热度榜（公开数据，免登录） ==========
+  /** 拉榜单某页：typeName = hot | new | game_jam，from 起始名次，limit ≤ 20 */
+  rankBoard: (typeName, from, limit) => ipcRenderer.invoke('bridge:rankBoard', typeName, from, limit),
+  /** 保存当前整点快照（同一小时覆盖） */
+  rankSaveSnapshot: (board, items) => ipcRenderer.invoke('bridge:rankSaveSnapshot', board, items),
+  /** 读取快照：full=true 返回完整快照；给 appId 返回该游戏历史序列 */
+  rankHistory: (board, appId, full) => ipcRenderer.invoke('bridge:rankHistory', board, appId || null, !!full),
+  /** 单游戏详情（热度、所在榜名次、评分等） */
+  rankAppDetail: (appId) => ipcRenderer.invoke('bridge:rankAppDetail', appId),
 
   /** 检查登录状态：返回 Promise<{status, developerId, profile, studios, ...}> */
   checkLogin: () => ipcRenderer.invoke('bridge:checkLogin'),

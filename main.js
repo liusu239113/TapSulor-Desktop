@@ -532,14 +532,23 @@ async function getRepToken(devId, force) {
       for (const acc of accounts.accounts || []) { consoleDevId = acc.activeDeveloperId || acc.developerId; if (consoleDevId) break; }
     }
     const consoleUrl = consoleDevId ? ('https://rep.taptap.cn/' + consoleDevId + '/') : 'https://rep.taptap.cn/';
-    // op-jwt-token 存在 rep.taptap.cn 的 localStorage 中，而 localStorage 在各账号之间共用。
-    // 缓存未命中（首次/换号）时先清掉残留令牌，再让 SSO 按当前会话签发新的，
-    // 避免用上一个账号的令牌查当前账号的数据（服务器会回「非法厂商Id」）。
+    // 快速路径：localStorage 里已有「属于当前账号」的令牌，直接复用，无需任何授权弹窗。
+    // op-jwt-owner 记录令牌归属的账号，避免换号后误用上一个账号的令牌。
     try {
       await win.loadURL('https://rep.taptap.cn/');
-      await win.webContents.executeJavaScript('(() => { try { localStorage.removeItem("op-jwt-token"); return "cleared"; } catch (e) { return "skip"; } })()')
-        .then(r => appLog('[rep] 清除残留令牌:', r)).catch(() => {});
+      const probe = await win.webContents.executeJavaScript(`(() => ({
+        token: localStorage.getItem("op-jwt-token") || "",
+        owner: localStorage.getItem("op-jwt-owner") || ""
+      }))()`);
+      if (!force && probe.token && probe.owner === key) {
+        repTokenCache = { key, token: probe.token, fetchedAt: Date.now() };
+        appLog('[rep] 复用已归属当前账号的令牌');
+        return probe.token;
+      }
+      // 慢路径：清掉残留令牌（可能属于上一个账号），再让 SSO 按当前会话签发新的
+      await win.webContents.executeJavaScript('(() => { try { localStorage.removeItem("op-jwt-token"); localStorage.removeItem("op-jwt-owner"); } catch (e) {} return true; })()');
     } catch (_) {}
+
     await win.loadURL(consoleUrl);
     appLog('[rep] 打开', consoleUrl, force ? '(强制重取)' : '');
     // 轮询等待令牌出现（最多 40s）；若落在 TapTap 授权页则自动点「确认登录」
@@ -581,7 +590,13 @@ async function getRepToken(devId, force) {
       appLog('[rep] 该账号没有有效 TapTap 会话，需要重新登录');
       return 'LOGIN_REQUIRED';
     }
-    if (token) repTokenCache = { key, token, fetchedAt: Date.now() };
+    if (token) {
+      repTokenCache = { key, token, fetchedAt: Date.now() };
+      // 标记令牌归属当前账号，下次直接复用（避免每次打开都弹授权）
+      try {
+        await win.webContents.executeJavaScript(`(() => { try { localStorage.setItem("op-jwt-owner", ${JSON.stringify(key)}); } catch (e) {} return true; })()`);
+      } catch (_) {}
+    }
     appLog('[rep] token fetch:', token ? 'ok' : 'FAILED (40s 内未在 rep.taptap.cn 拿到令牌)');
     return token;
   } finally {
@@ -589,13 +604,14 @@ async function getRepToken(devId, force) {
   }
 }
 
-ipcMain.handle('bridge:repRevenue', async (event, appId) => {
+ipcMain.handle('bridge:repRevenue', async (event, appId, opts) => {
   try {
     // REP 数据归属于「拥有该游戏的厂商」：用当前账号/工作室自己的身份查询，
-    // 切换账号或工作室时令牌会按 key 失效重取，绝不借用其他账号的权限
+    // 切换账号时令牌会按账号失效重取，绝不借用其他账号的权限
     const acc = currentAccount();
     const developerId = String(activeDeveloperId || (acc && acc.developerId) || '');
     if (!developerId) return { ok: false, status: 0, body: null, error: 'REP_NO_DEV_ID' };
+    if (opts && opts.force) invalidateRepToken();
 
     const token = await getRepToken(developerId);
     if (token === 'LOGIN_REQUIRED') return { ok: false, status: 0, body: null, error: 'REP_LOGIN_REQUIRED' };
@@ -647,6 +663,126 @@ function appLog(...args) {
     fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ` + args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n', 'utf-8');
   } catch (_) {}
 }
+
+// ====== 热度榜（public 榜单，免登录） ======
+const RANK_HISTORY_FILE = path.join(DATA_DIR, 'rank-history.json');
+const RANK_BOARDS = ['hot', 'new', 'game_jam'];
+const RANK_KEEP_SNAPSHOTS = 72; // 每榜保留最近 72 个整点快照（约 3 天）
+let rankUid = null;
+function getRankUid() {
+  if (rankUid) return rankUid;
+  try {
+    const meta = fs.existsSync(path.join(DATA_DIR, 'rank-meta.json'))
+      ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'rank-meta.json'), 'utf-8'))
+      : {};
+    if (meta.uid) { rankUid = meta.uid; return rankUid; }
+    rankUid = require('crypto').randomUUID();
+    fs.writeFileSync(path.join(DATA_DIR, 'rank-meta.json'), JSON.stringify({ uid: rankUid }), 'utf-8');
+    return rankUid;
+  } catch (_) {
+    rankUid = '00000000-0000-4000-8000-000000000000';
+    return rankUid;
+  }
+}
+function rankXua() {
+  return encodeURIComponent(`V=1&PN=WebApp&LANG=zh_CN&VN_CODE=100000000&LOC=CN&PLT=PC&DS=Android&UID=${getRankUid()}&OS=Windows&OSV=10&DT=PC`);
+}
+
+// 拉一个榜单的一页（公开接口，不需要登录）
+ipcMain.handle('bridge:rankBoard', async (event, typeName, from, limit) => {
+  try {
+    if (!RANK_BOARDS.includes(typeName)) return { ok: false, error: 'BAD_TYPE' };
+    const f = Number.isFinite(from) ? from : 0;
+    const l = Number.isFinite(limit) ? Math.min(limit, 20) : 10;
+    const url = `https://www.taptap.cn/webapiv2/app-top/v2/hits?type_name=${typeName}&from=${f}&limit=${l}&X-UA=${rankXua()}`;
+    const resp = await net.fetch(url, {
+      headers: { 'User-Agent': DESKTOP_UA, 'Accept': 'application/json, text/plain, */*', 'Referer': 'https://www.taptap.cn/top/download' },
+    });
+    const body = await resp.text();
+    return { ok: resp.ok, status: resp.status, body, error: null };
+  } catch (err) {
+    return { ok: false, status: 0, body: null, error: err.message };
+  }
+});
+
+// 读取快照库
+function readRankHistory() {
+  try {
+    if (!fs.existsSync(RANK_HISTORY_FILE)) return {};
+    return JSON.parse(fs.readFileSync(RANK_HISTORY_FILE, 'utf-8')) || {};
+  } catch (_) { return {}; }
+}
+function writeRankHistory(data) {
+  try { fs.writeFileSync(RANK_HISTORY_FILE, JSON.stringify(data), 'utf-8'); } catch (_) {}
+}
+
+// 保存当前整点快照（同一小时内重复调用会覆盖，只保留整点数据）
+ipcMain.handle('bridge:rankSaveSnapshot', async (event, board, items) => {
+  try {
+    if (!RANK_BOARDS.includes(board) || !Array.isArray(items)) return { ok: false };
+    const hourTs = Math.floor(Date.now() / 3600000) * 3600000;
+    const data = readRankHistory();
+    const arr = Array.isArray(data[board]) ? data[board] : [];
+    const snap = { ts: hourTs, items: items.map(it => ({ id: String(it.id), rank: it.rank, hits: it.hits, score: it.score })) };
+    const idx = arr.findIndex(s => s.ts === hourTs);
+    if (idx >= 0) arr[idx] = snap; else arr.push(snap);
+    arr.sort((a, b) => a.ts - b.ts);
+    data[board] = arr.slice(-RANK_KEEP_SNAPSHOTS);
+    writeRankHistory(data);
+    return { ok: true, saved: data[board].length };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// 读取快照：full=true 返回完整快照（含每个游戏的热度），否则按游戏取序列
+ipcMain.handle('bridge:rankHistory', async (event, board, appId, full) => {
+  const data = readRankHistory();
+  const arr = Array.isArray(data[board]) ? data[board] : [];
+  if (full) return { ok: true, snapshots: arr };
+  if (!appId) return { ok: true, snapshots: arr.map(s => ({ ts: s.ts, count: (s.items || []).length })) };
+  const series = [];
+  for (const s of arr) {
+    const hit = (s.items || []).find(it => String(it.id) === String(appId));
+    series.push({ ts: s.ts, rank: hit ? hit.rank : null, hits: hit ? hit.hits : null, score: hit ? hit.score : null });
+  }
+  return { ok: true, series };
+});
+
+// 单游戏详情（含当前热度、所在榜名次）
+ipcMain.handle('bridge:rankAppDetail', async (event, appId) => {
+  try {
+    const url = `https://www.taptap.cn/webapiv2/app/v6/detail?id=${encodeURIComponent(appId)}&X-UA=${rankXua()}`;
+    const resp = await net.fetch(url, {
+      headers: { 'User-Agent': DESKTOP_UA, 'Accept': 'application/json, text/plain, */*', 'Referer': 'https://www.taptap.cn/' },
+    });
+    if (!resp.ok) return { ok: false, status: resp.status, error: 'HTTP_' + resp.status };
+    const j = JSON.parse(await resp.text());
+    const app = j && j.data && j.data.app;
+    if (!app) return { ok: false, error: 'NO_APP' };
+    const stat = app.stat || {};
+    const bar = (app.information_bar || []).find(x => x && x.key === 'rank') || null;
+    return {
+      ok: true,
+      app: {
+        id: app.id,
+        title: app.title,
+        icon: app.icon && (app.icon.small_url || app.icon.url),
+        score: stat.rating && stat.rating.score,
+        reviewCount: stat.review_count,
+        fans: stat.fans_count,
+        wish: stat.wish_count,
+        hits: stat.hits_total,
+        rankTitle: bar && bar.title,
+        rankText: bar && bar.text,
+        tags: (app.tags || []).slice(0, 3).map(t => t && t.value).filter(Boolean),
+        labels: app.title_labels || [],
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // 检查登录状态
 ipcMain.handle('bridge:checkLogin', async () => {

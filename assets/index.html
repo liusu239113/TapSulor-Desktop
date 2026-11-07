@@ -39,6 +39,14 @@
       </div>
     </header>
 
+    <!-- ===== 视图切换（收益总览 / 热度榜） ===== -->
+    <nav class="view-tabs" id="view-tabs">
+      <button type="button" class="view-tab is-active" data-view="home">收益总览</button>
+      <button type="button" class="view-tab" data-view="rank">热度榜</button>
+    </nav>
+
+    <div id="view-home">
+
     <!-- ===== 操作员条 ===== -->
     <section class="operator-strip" id="operator-strip">
       <img class="op-avatar" id="active-account-avatar" src="app-icon.png" alt="" hidden>
@@ -50,13 +58,6 @@
       <button class="op-manage" type="button" id="studio-switch-btn" aria-haspopup="listbox" aria-expanded="false">切换工作室 ▾</button>
       <div class="studio-dropdown" id="studio-dropdown" role="listbox" hidden></div>
     </section>
-
-    <!-- 查任意 APP ID（用当前登录态请求，验证接口是否校验归属） -->
-    <div class="appid-switch" id="appid-switch-home">
-      <span class="appid-switch-label">查任意 APP ID</span>
-      <input type="text" id="appid-input-home" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="输入 APP ID，直接查看其收益 / 日活等数据" />
-      <button class="appid-switch-btn" id="appid-go-home">查看</button>
-    </div>
 
     <!-- ===== 三宫格数据瓦片（取代原来的大横幅 + 两卡片）===== -->
     <section class="stat-deck">
@@ -109,6 +110,46 @@
     <div class="game-grid" id="game-list"><div class="loading-tip">数据加载中...</div></div>
 
     <footer class="app-footer"><span id="app-version-footer">TapSulor / v1.0.1</span></footer>
+    </div><!-- /#view-home -->
+
+    <!-- ===== 热度榜视图 ===== -->
+    <div id="view-rank" hidden>
+      <div class="rank-toolbar">
+        <div class="rank-boards" id="rank-boards">
+          <button type="button" class="rank-board is-active" data-board="hot">热门榜</button>
+          <button type="button" class="rank-board" data-board="new">新品榜</button>
+          <button type="button" class="rank-board" data-board="game_jam">聚光灯榜</button>
+          <button type="button" class="rank-board" data-board="summary">汇总</button>
+        </div>
+        <div class="rank-meta">
+          <span id="rank-updated">尚未加载</span>
+          <button type="button" class="rank-refresh" id="rank-refresh">刷新</button>
+        </div>
+      </div>
+
+      <div class="rank-search">
+        <input type="text" id="rank-search-input" placeholder="搜索榜单内任意游戏（名称或 APP ID），回车查看详情" autocomplete="off" spellcheck="false">
+        <button type="button" class="rank-search-btn" id="rank-search-btn">搜索</button>
+      </div>
+      <div class="rank-search-result" id="rank-search-result" hidden></div>
+
+      <div class="rank-list" id="rank-list"><div class="loading-tip">榜单加载中...</div></div>
+      <div class="rank-summary" id="rank-summary" hidden></div>
+
+      <div class="rank-detail" id="rank-detail" hidden>
+        <div class="rank-detail-head">
+          <button type="button" class="rank-detail-close" id="rank-detail-close">×</button>
+          <img id="rank-detail-icon" class="rank-detail-icon" alt="">
+          <div class="rank-detail-info">
+            <div class="rank-detail-title" id="rank-detail-title">-</div>
+            <div class="rank-detail-sub" id="rank-detail-sub">-</div>
+          </div>
+        </div>
+        <div class="rank-detail-stats" id="rank-detail-stats"></div>
+        <div class="rank-detail-chart" id="rank-detail-chart"></div>
+        <div class="rank-detail-note">趋势来自本机每小时快照，开启软件时自动记录</div>
+      </div>
+    </div><!-- /#view-rank -->
 
     <!-- ===== 设置面板 ===== -->
     <div class="settings-modal" id="settings-modal" hidden>
@@ -175,6 +216,7 @@
   </div>
 
   <script src="android-bridge.js"></script>
+  <script src="js/rank.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

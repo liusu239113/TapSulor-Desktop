@@ -1004,7 +1004,10 @@
       return n > 0 ? ' rep-pos' : ' rep-neg';
     };
     card.innerHTML =
-      '<div class="rep-title">REP 平台收益<span class="rep-unit">资源置换 · 单位已换算为元</span></div>' +
+      '<div class="rep-title">REP 平台收益' +
+        '<span class="rep-unit">资源置换 · 单位已换算为元</span>' +
+        '<button class="rep-refresh" id="rep-refresh" title="刷新">刷新</button>' +
+      '</div>' +
       '<div class="rep-grid">' +
         '<div class="rep-tile rep-main"><div class="rep-label">本月收益</div><div class="rep-value">' + y(rev.current_month_revenue) + '</div></div>' +
         '<div class="rep-tile"><div class="rep-label">今日收益</div><div class="rep-value">' + y(rev.today_revenue) + '</div></div>' +
@@ -1017,11 +1020,14 @@
         '<div class="rep-tile"><div class="rep-label">昨日 REP 转化</div><div class="rep-value">' + (rev.yesterday_transformation == null ? '—' : String(rev.yesterday_transformation)) + '</div></div>' +
       '</div>' +
       '<div class="rep-note">数据来自 REP 资源置换平台（rep.taptap.cn），与广告收益相互独立，不计入上方累计收益</div>';
+    const refreshBtn = card.querySelector('#rep-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', (e) => { e.stopPropagation(); loadRepRevenue(true); });
   }
 
-  async function loadRepRevenue() {
+  async function loadRepRevenue(force) {
     const card = ensureRepCard();
     if (!card) return;
+    if (force) { repData = null; repError = null; }
     if (repData) { renderRep(repData); return; }
     if (repLoading) return;
     if (repError) { card.innerHTML = '<div class="rep-empty">' + repError + '</div>'; return; }
@@ -1034,7 +1040,7 @@
     try {
       const appId = initialAppId || (currentGame && currentGame.appId);
       if (!appId) throw new Error('缺少游戏 ID');
-      const res = await window.electronAPI.repRevenue(appId);
+      const res = await window.electronAPI.repRevenue(appId, { force: !!force });
       if (!res || !res.ok) {
         let msg = 'REP 接口请求失败' + (res && res.status ? ' (' + res.status + ')' : '');
         if (res && res.error === 'REP_LOGIN_REQUIRED') {
@@ -1054,7 +1060,10 @@
       renderRep(repData);
     } catch (e) {
       repError = 'REP 收益获取失败：' + (e && e.message ? e.message : e);
-      card.innerHTML = '<div class="rep-empty">' + repError + '</div>';
+      card.innerHTML = '<div class="rep-empty">' + repError +
+        '<button class="rep-refresh" id="rep-refresh" title="重试">重试</button></div>';
+      const retry = card.querySelector('#rep-refresh');
+      if (retry) retry.addEventListener('click', (ev) => { ev.stopPropagation(); loadRepRevenue(true); });
     } finally {
       repLoading = false;
     }
@@ -1392,14 +1401,8 @@
     startLoad();
   }
 
-  const appidInput = document.getElementById('appid-input');
-  const appidGo = document.getElementById('appid-go');
-  if (appidGo && appidInput) {
-    appidGo.addEventListener('click', () => switchAppId(appidInput.value));
-    appidInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') switchAppId(appidInput.value);
-    });
-  }
+  const appidInput = null;
+  const appidGo = null;
 
   // ========== 初始化 ==========
   const gameData = sessionStorage.getItem('currentGame');
