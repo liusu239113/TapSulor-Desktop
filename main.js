@@ -508,11 +508,13 @@ ipcMain.handle('bridge:fetch', async (event, url) => {
 // ====== REP 平台（rep.taptap.cn）数据桥接 ======
 // REP 与开发者后台共用 TapTap 账号 SSO 登录态：
 // 静默打开 rep.taptap.cn → SSO 自动写入 localStorage['op-jwt-token'] → 带令牌调用 tap-op 接口
-let repTokenCache = { token: null, fetchedAt: 0 };
+let repTokenCache = { key: null, token: null, fetchedAt: 0 };
 const REP_TOKEN_TTL = 4 * 60 * 60 * 1000; // 4 小时后强制刷新
+function invalidateRepToken() { repTokenCache = { key: null, token: null, fetchedAt: 0 }; }
 
-async function getRepToken() {
-  if (repTokenCache.token && Date.now() - repTokenCache.fetchedAt < REP_TOKEN_TTL) {
+async function getRepToken(devId) {
+  const key = String(devId || '');
+  if (repTokenCache.token && repTokenCache.key === key && Date.now() - repTokenCache.fetchedAt < REP_TOKEN_TTL) {
     return repTokenCache.token;
   }
   const win = new BrowserWindow({
@@ -558,7 +560,7 @@ async function getRepToken() {
         if (tries >= 80) { clearInterval(timer); resolve(null); }
       }, 500);
     });
-    if (token) repTokenCache = { token, fetchedAt: Date.now() };
+    if (token) repTokenCache = { key, token, fetchedAt: Date.now() };
     appLog('[rep] token fetch:', token ? 'ok' : 'FAILED (40s 内未在 rep.taptap.cn 拿到令牌，可能需要手动打开 REP 后台确认一次授权)');
     return token;
   } finally {
@@ -568,45 +570,35 @@ async function getRepToken() {
 
 ipcMain.handle('bridge:repRevenue', async (event, appId) => {
   try {
-    const token = await getRepToken();
+    // REP 数据归属于「拥有该游戏的厂商」：用当前账号/工作室自己的身份查询，
+    // 切换账号或工作室时令牌会按 key 失效重取，绝不借用其他账号的权限
+    const acc = currentAccount();
+    const developerId = String(activeDeveloperId || (acc && acc.developerId) || '');
+    if (!developerId) return { ok: false, status: 0, body: null, error: 'REP_NO_DEV_ID' };
+
+    const token = await getRepToken(developerId);
     if (!token) return { ok: false, status: 0, body: null, error: 'REP_TOKEN_FAIL' };
 
-    // REP 数据按 (app_id, developer_id) 授权，且当前登录账号可能不是拥有该游戏的厂商；
-    // 依次尝试本地已知的所有厂商 ID，取第一个有权限的
-    const candidates = [];
-    const push = (id) => { if (id && !candidates.includes(String(id))) candidates.push(String(id)); };
-    push(activeDeveloperId);
-    for (const acc of accounts.accounts || []) {
-      push(acc.activeDeveloperId);
-      push(acc.developerId);
-      for (const s of acc.studios || []) push(s.id);
+    const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
+      method: 'GET',
+      headers: {
+        'Authorization': token,
+        'x-app-id': String(appId),
+        'x-developer-id': developerId,
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': DESKTOP_UA,
+        'Referer': 'https://rep.taptap.cn/',
+      },
+    });
+    const body = await response.text();
+    // 令牌失效时清缓存，下次调用重新走 SSO 获取
+    if (response.status === 401 || response.status === 403) {
+      invalidateRepToken();
     }
-
-    let last = null;
-    for (const developerId of candidates) {
-      const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
-        method: 'GET',
-        headers: {
-          'Authorization': token,
-          'x-app-id': String(appId),
-          'x-developer-id': developerId,
-          'Accept': 'application/json, text/plain, */*',
-          'User-Agent': DESKTOP_UA,
-          'Referer': 'https://rep.taptap.cn/',
-        },
-      });
-      const body = await response.text();
-      if (response.status === 401 || response.status === 403) {
-        repTokenCache = { token: null, fetchedAt: 0 };
-      }
-      if (response.ok) {
-        appLog('[rep] revenue ok, developer_id =', developerId, 'app_id =', appId);
-        return { ok: true, status: response.status, body, error: null, developerId };
-      }
-      appLog('[rep] revenue fail, developer_id =', developerId, 'status =', response.status, String(body).slice(0, 120));
-      last = { ok: false, status: response.status, body, error: null };
+    if (!response.ok) {
+      appLog('[rep] revenue fail, developer_id =', developerId, 'app_id =', appId, 'status =', response.status, String(body).slice(0, 120));
     }
-    return last || { ok: false, status: 0, body: null, error: 'REP_NO_DEV_ID' };
+    return { ok: response.ok, status: response.status, body, error: null, developerId };
   } catch (err) {
     return { ok: false, status: 0, body: null, error: err.message };
   }
@@ -735,6 +727,7 @@ ipcMain.handle('bridge:switchStudio', (event, developerId) => {
     acc.developerAvatar = picked.logo;
   }
   saveAccounts();
+  invalidateRepToken(); // 换工作室后 REP 身份变了，令牌需重新获取
   // 切换后重载页面，让前端重新拉取新工作室的游戏列表和收入（与登录成功行为一致）
   if (mainWindow) mainWindow.webContents.reload();
   return true;
@@ -898,6 +891,7 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     const saveAndFinish = async (developerId) => {
       if (!developerId || !/^\d+$/.test(developerId)) return;
       appLog('[login] saveAndFinish, developerId =', String(developerId));
+      invalidateRepToken(); // 新登录会话，REP 令牌重新获取
 
       const result = await probeDeveloperId();
       if (!result) {
@@ -1149,6 +1143,7 @@ ipcMain.handle('bridge:switchAccount', async (event, id) => {
   accounts.current = acc.id;
   activeDeveloperId = acc.activeDeveloperId || acc.developerId;
   saveAccounts();
+  invalidateRepToken(); // 换账号后 REP 会话已变，令牌需重新获取
 
   if (mainWindow) {
     mainWindow.webContents.send('account-updated', { isNew: false, alreadyCurrent: false, switched: true, developerId: acc.developerId });

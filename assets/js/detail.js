@@ -1027,9 +1027,15 @@
       if (!appId) throw new Error('缺少游戏 ID');
       const res = await window.electronAPI.repRevenue(appId);
       if (!res || !res.ok) {
-        throw new Error(res && res.error === 'REP_TOKEN_FAIL'
-          ? 'REP 登录态获取失败，请先在设置中登录开发者后台'
-          : 'REP 接口请求失败' + (res && res.status ? ' (' + res.status + ')' : ''));
+        let msg = 'REP 接口请求失败' + (res && res.status ? ' (' + res.status + ')' : '');
+        if (res && res.error === 'REP_TOKEN_FAIL') {
+          msg = 'REP 登录态获取失败，请在设置中重新登录开发者账号';
+        } else if (res && res.body && /非法厂商Id/.test(res.body)) {
+          msg = '当前账号没有这个游戏的 REP 数据（REP 仅统计开通了资源置换的厂商）';
+        } else if (res && res.status === 401) {
+          msg = 'REP 登录已过期，请重新登录后重试';
+        }
+        throw new Error(msg);
       }
       const json = JSON.parse(res.body);
       if (json && json.code) throw new Error(json.message || 'REP 返回异常');
