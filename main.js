@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.1';
-const VERSION_CODE = 1;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.2';
+const VERSION_CODE = 2;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
 const UPDATE_UA = `TapSulor/${APP_VERSION} (Windows)`;
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -1127,7 +1127,11 @@ async function fetchUpdateInfo() {
     });
     if (!response.ok) return null;
     const json = await response.json();
-    return json || null;
+    if (!json) return null;
+    // 线上 version.json 按平台分层：{ android: {...}, windows: {...}, admin: {...} }
+    const picked = json.windows || json;
+    appLog('[update] version.json:', JSON.stringify(picked).slice(0, 200));
+    return picked;
   } catch (err) {
     console.error('[update] fetch error:', err.message);
     return null;
