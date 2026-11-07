@@ -1037,7 +1037,9 @@
       const res = await window.electronAPI.repRevenue(appId);
       if (!res || !res.ok) {
         let msg = 'REP 接口请求失败' + (res && res.status ? ' (' + res.status + ')' : '');
-        if (res && res.error === 'REP_TOKEN_FAIL') {
+        if (res && res.error === 'REP_LOGIN_REQUIRED') {
+          msg = '该账号的 TapTap 登录已失效，请重新登录后查看 REP';
+        } else if (res && res.error === 'REP_TOKEN_FAIL') {
           msg = 'REP 登录态获取失败，请在设置中重新登录开发者账号';
         } else if (res && res.body && /非法厂商Id/.test(res.body)) {
           msg = '当前账号没有这个游戏的 REP 数据（REP 仅统计开通了资源置换的厂商）';

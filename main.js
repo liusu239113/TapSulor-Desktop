@@ -513,7 +513,10 @@ const REP_TOKEN_TTL = 4 * 60 * 60 * 1000; // 4 小时后强制刷新
 function invalidateRepToken() { repTokenCache = { key: null, token: null, fetchedAt: 0 }; }
 
 async function getRepToken(devId, force) {
-  const key = String(devId || '');
+  // 令牌按「账号」隔离（REP 令牌是会话级的，同一账号下所有工作室通用）；
+  // 换账号必须重取，换工作室无需重取。缓存未命中时一律清残留令牌重走授权，
+  // 杜绝上一个账号的令牌被带到当前账号（否则服务器回「非法厂商Id」）。
+  const key = String(accounts.current || devId || '');
   if (!force && repTokenCache.token && repTokenCache.key === key && Date.now() - repTokenCache.fetchedAt < REP_TOKEN_TTL) {
     return repTokenCache.token;
   }
@@ -530,15 +533,13 @@ async function getRepToken(devId, force) {
     }
     const consoleUrl = consoleDevId ? ('https://rep.taptap.cn/' + consoleDevId + '/') : 'https://rep.taptap.cn/';
     // op-jwt-token 存在 rep.taptap.cn 的 localStorage 中，而 localStorage 在各账号之间共用。
-    // 换号后残留的旧令牌会让请求以上一个账号的身份发出（服务器回「非法厂商Id」）。
-    // 仅当第一次请求失败时（force=true）才清除令牌并重走授权，避免每次都弹「确认登录」。
-    if (force) {
-      try {
-        await win.loadURL('https://rep.taptap.cn/');
-        await win.webContents.executeJavaScript('(() => { try { localStorage.removeItem("op-jwt-token"); return "cleared"; } catch (e) { return "skip"; } })()')
-          .then(r => appLog('[rep] 清除残留令牌:', r)).catch(() => {});
-      } catch (_) {}
-    }
+    // 缓存未命中（首次/换号）时先清掉残留令牌，再让 SSO 按当前会话签发新的，
+    // 避免用上一个账号的令牌查当前账号的数据（服务器会回「非法厂商Id」）。
+    try {
+      await win.loadURL('https://rep.taptap.cn/');
+      await win.webContents.executeJavaScript('(() => { try { localStorage.removeItem("op-jwt-token"); return "cleared"; } catch (e) { return "skip"; } })()')
+        .then(r => appLog('[rep] 清除残留令牌:', r)).catch(() => {});
+    } catch (_) {}
     await win.loadURL(consoleUrl);
     appLog('[rep] 打开', consoleUrl, force ? '(强制重取)' : '');
     // 轮询等待令牌出现（最多 40s）；若落在 TapTap 授权页则自动点「确认登录」
@@ -553,6 +554,10 @@ async function getRepToken(devId, force) {
             text: document.body ? document.body.innerText.slice(0, 300) : ''
           }))()`);
           if (info.token) { clearInterval(timer); resolve(info.token); return; }
+          // 落到登录页说明该账号没有有效 TapTap 会话，直接结束（不再空等 40 秒）
+          if (tries >= 4 && /accounts\.taptap\.cn\/login/.test(info.url)) {
+            clearInterval(timer); resolve('LOGIN_REQUIRED'); return;
+          }
           if (tries % 8 === 0) {
             appLog('[rep] 等待令牌中... url =', String(info.url).slice(0, 100), '| text =', String(info.text).replace(/\n/g, ' ').slice(0, 90));
           }
@@ -572,6 +577,10 @@ async function getRepToken(devId, force) {
         if (tries >= 80) { clearInterval(timer); resolve(null); }
       }, 500);
     });
+    if (token === 'LOGIN_REQUIRED') {
+      appLog('[rep] 该账号没有有效 TapTap 会话，需要重新登录');
+      return 'LOGIN_REQUIRED';
+    }
     if (token) repTokenCache = { key, token, fetchedAt: Date.now() };
     appLog('[rep] token fetch:', token ? 'ok' : 'FAILED (40s 内未在 rep.taptap.cn 拿到令牌)');
     return token;
@@ -589,6 +598,7 @@ ipcMain.handle('bridge:repRevenue', async (event, appId) => {
     if (!developerId) return { ok: false, status: 0, body: null, error: 'REP_NO_DEV_ID' };
 
     const token = await getRepToken(developerId);
+    if (token === 'LOGIN_REQUIRED') return { ok: false, status: 0, body: null, error: 'REP_LOGIN_REQUIRED' };
     if (!token) return { ok: false, status: 0, body: null, error: 'REP_TOKEN_FAIL' };
 
     const doFetch = async (tk) => {
@@ -607,10 +617,11 @@ ipcMain.handle('bridge:repRevenue', async (event, appId) => {
     };
 
     let { status, body } = await doFetch(token);
-    // 被拒时（令牌可能仍属于上一个账号）强制重取一次再试
+    // 被拒时（例如令牌仍属于上一个账号）强制重取一次再试
     if (!(status >= 200 && status < 300)) {
       invalidateRepToken();
       const tk2 = await getRepToken(developerId, true);
+      if (tk2 === 'LOGIN_REQUIRED') return { ok: false, status: 0, body: null, error: 'REP_LOGIN_REQUIRED' };
       if (tk2) {
         appLog('[rep] 首次失败(' + status + ')，已重取令牌重试');
         ({ status, body } = await doFetch(tk2));
@@ -751,7 +762,7 @@ ipcMain.handle('bridge:switchStudio', (event, developerId) => {
     acc.developerAvatar = picked.logo;
   }
   saveAccounts();
-  invalidateRepToken(); // 换工作室后 REP 身份变了，令牌需重新获取
+  // 换工作室不失效 REP 令牌：REP 令牌是「账号」级的，同一账号下各工作室通用
   // 切换后重载页面，让前端重新拉取新工作室的游戏列表和收入（与登录成功行为一致）
   if (mainWindow) mainWindow.webContents.reload();
   return true;
