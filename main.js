@@ -570,6 +570,7 @@ ipcMain.handle('bridge:repRevenue', async (event, appId) => {
 
 // ====== 诊断日志（登录链路排障用） ======
 const LOG_FILE = path.join(DATA_DIR, 'app.log');
+const bodyWaiters = new Map(); // CDP 响应体捕获队列
 function appLog(...args) {
   try {
     fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ` + args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n', 'utf-8');
@@ -977,14 +978,39 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
             const u = params.request.url;
             if (u.startsWith('data:') || u.includes('sentry') || u.endsWith('.png') || u.endsWith('.woff2') || u.endsWith('.css')) return;
             appLog('[login][cdp-req]', params.type || '?', u.slice(0, 170));
+            if (u.includes('device-code/login') || u.includes('/api/user/profile')) {
+              appLog('[login][cdp-REQ-HDRS]', JSON.stringify(params.request.headers).slice(0, 900));
+              if (params.request.postData) appLog('[login][cdp-REQ-BODY]', String(params.request.postData).slice(0, 400));
+              bodyWaiters.set(params.requestId, u.includes('device-code/login') ? 'device-code/login' : 'user/profile');
+            }
+          } else if (method === 'Network.webSocketCreated') {
+            appLog('[login][cdp-WS-CREATE]', params.url.slice(0, 170));
+          } else if (method === 'Network.responseReceived') {
+            const u = params.response.url;
+            if (u.includes('device-code/login') || u.includes('/api/user/profile')) {
+              const sc = params.response.headers['set-cookie'] || '(无)';
+              appLog('[login][cdp-RESP]', params.response.status, u.slice(0, 90));
+              appLog('[login][cdp-RESP-HDRS]', JSON.stringify(params.response.headers).slice(0, 1200));
+            }
+          } else if (method === 'Network.loadingFinished') {
+            const kind = bodyWaiters.get(params.requestId);
+            if (kind) {
+              bodyWaiters.delete(params.requestId);
+              if (kind === 'user/profile') {
+                session.defaultSession.cookies.get({ domain: '.taptap.cn' }).then((all) => {
+                  appLog('[login][cookies]', all.map(c => c.name + (c.value ? '(有值)' : '(空)')).join(', ').slice(0, 600));
+                }).catch(() => {});
+              }
+              winContents.debugger.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then((r) => {
+                appLog('[login][cdp-BODY][' + kind + ']', String(r.body || '').slice(0, 900), r.base64Encoded ? '(base64)' : '');
+              }).catch((e) => appLog('[login][cdp-BODY-FAIL][' + kind + ']', String(e).slice(0, 100)));
+            }
           } else if (method === 'Network.webSocketCreated') {
             appLog('[login][cdp-WS-CREATE]', params.url.slice(0, 170));
           } else if (method === 'Network.webSocketClosed') {
             appLog('[login][cdp-WS-CLOSED]');
           } else if (method === 'Network.webSocketError') {
             appLog('[login][cdp-WS-ERROR]', JSON.stringify(params).slice(0, 200));
-          } else if (method === 'Network.responseReceived' && params.response && params.response.status >= 400) {
-            appLog('[login][cdp-BAD]', params.response.status, params.response.url.slice(0, 150));
           }
         } catch (_) {}
       });
