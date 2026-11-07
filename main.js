@@ -951,38 +951,38 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       if (level >= 2) appLog('[login][page-error]', String(message).slice(0, 200), '@', String(sourceId).slice(0, 80));
     });
 
-    // 诊断：二维码页所有网络请求的成败（定位扫码轮询为何不动）
-    const diagFilter = { urls: ['*://accounts.taptap.cn/*', '*://*.taptap.cn/*'] };
+    // 诊断：二维码页所有网络请求的成败
+    const diagFilter = { urls: ['*://*/*'] };
     const netOnCompleted = (details) => {
       if (!loginWindow || loginWindow.isDestroyed()) return;
-      if (details.webContentsId !== winContents.webContentsId) return;
-      if (details.resourceType === 'image' || details.resourceType === 'stylesheet' || details.resourceType === 'font') return;
-      appLog('[login][net]', details.responseStatusCode || '?', details.url.slice(0, 140));
+      if (details.resourceType === 'image' || details.resourceType === 'stylesheet' || details.resourceType === 'font' || details.resourceType === 'media') return;
+      appLog('[login][net]', details.responseStatusCode || '?', details.resourceType || '?', details.url.slice(0, 140));
     };
     const netOnError = (details) => {
       if (!loginWindow || loginWindow.isDestroyed()) return;
-      if (details.webContentsId !== winContents.webContentsId) return;
-      appLog('[login][net-ERR]', details.errorText, details.url.slice(0, 140));
+      appLog('[login][net-ERR]', details.errorText, details.resourceType || '?', details.url.slice(0, 140));
     };
     session.defaultSession.webRequest.onCompleted(diagFilter, netOnCompleted);
     session.defaultSession.webRequest.onErrorOccurred(diagFilter, netOnError);
 
-    // 诊断：CDP 全量抓取（含 WebSocket 握手），解决普通 webRequest 看不到长连接的问题
+    // 诊断：CDP 全量抓取（含 WebSocket / Service Worker 流量）
     try {
       winContents.debugger.attach('1.3');
       winContents.debugger.sendCommand('Network.enable', { maxPostDataSize: 4096 }).then(() => {
         appLog('[login][cdp] attached');
       }).catch((e) => appLog('[login][cdp] enable fail', String(e).slice(0, 100)));
-      winContents.on('debugger-message', (ev, method, params) => {
+      winContents.debugger.on('message', (ev, method, params) => {
         try {
           if (method === 'Network.requestWillBeSent') {
             const u = params.request.url;
-            if (u.startsWith('data:') || u.includes('sentry') || u.endsWith('.png') || u.endsWith('.woff2')) return;
+            if (u.startsWith('data:') || u.includes('sentry') || u.endsWith('.png') || u.endsWith('.woff2') || u.endsWith('.css')) return;
             appLog('[login][cdp-req]', params.type || '?', u.slice(0, 170));
           } else if (method === 'Network.webSocketCreated') {
             appLog('[login][cdp-WS-CREATE]', params.url.slice(0, 170));
           } else if (method === 'Network.webSocketClosed') {
             appLog('[login][cdp-WS-CLOSED]');
+          } else if (method === 'Network.webSocketError') {
+            appLog('[login][cdp-WS-ERROR]', JSON.stringify(params).slice(0, 200));
           } else if (method === 'Network.responseReceived' && params.response && params.response.status >= 400) {
             appLog('[login][cdp-BAD]', params.response.status, params.response.url.slice(0, 150));
           }
