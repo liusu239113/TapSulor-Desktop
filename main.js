@@ -784,6 +784,42 @@ ipcMain.handle('bridge:rankAppDetail', async (event, appId) => {
   }
 });
 
+// 开发者信用等级 + 认证状态（切换账号/工作室时由前端重新调用）
+ipcMain.handle('bridge:developerBadges', async (event, developerId) => {
+  try {
+    const devId = String(developerId || '');
+    if (!/^\d+$/.test(devId)) return { ok: false, error: 'BAD_ID' };
+    const headers = {
+      'User-Agent': DESKTOP_UA,
+      'Referer': TAPTAP_REFERER,
+      'Accept': 'application/json, text/plain, */*',
+    };
+    const [creditRes, infoRes] = await Promise.all([
+      net.fetch(`https://developer.taptap.cn/api/developer/v1/credit-rating?developer_id=${devId}`, { headers }),
+      net.fetch(`https://developer.taptap.cn/api/developer/v2/info?developer_id=${devId}`, { headers }),
+    ]);
+    let creditLevel = null;
+    let verified = null;
+    try {
+      const j = await creditRes.json();
+      if (j && j.success && j.data) creditLevel = j.data.credit_level;
+    } catch (_) {}
+    try {
+      const j = await infoRes.json();
+      if (j && j.success && j.data) {
+        const ext = j.data.manufacturerExtendType || j.data.developerExtendType || '';
+        verified = ext === 'DEVELOPER_EXTEND_TYPE_AUTHENTICATION';
+      }
+    } catch (_) {}
+    // 等级映射与开发者中心前端一致
+    const levelText = ({ 1: 'S', 2: 'A', 3: 'B', 4: 'C', 5: 'D' })[creditLevel] || '暂未评级';
+    appLog('[badges] developer =', devId, 'credit =', creditLevel, levelText, 'verified =', verified);
+    return { ok: true, creditLevel, levelText, verified };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // 检查登录状态
 ipcMain.handle('bridge:checkLogin', async () => {
   try {

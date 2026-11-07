@@ -1239,6 +1239,29 @@
       || (acc.avatar && acc.avatar.trim()) || '';
   }
 
+  // 信用等级 + 认证状态：挂在运营主体 ID 下方，切换账号/工作室时重取
+  async function loadDeveloperBadges(devId) {
+    const el = document.getElementById('active-account-badges');
+    if (!el) return;
+    if (!devId) { el.innerHTML = ''; return; }
+    el.innerHTML = '<span class="op-badge muted">信用等级加载中…</span>';
+    try {
+      if (!(isElectron && window.electronAPI && window.electronAPI.developerBadges)) {
+        el.innerHTML = '';
+        return;
+      }
+      const res = await window.electronAPI.developerBadges(devId);
+      if (!res || !res.ok) { el.innerHTML = '<span class="op-badge muted">信用等级 —</span>'; return; }
+      const levelText = res.levelText || '暂未评级';
+      const verified = res.verified;
+      el.innerHTML =
+        (verified ? '<span class="op-badge ok">已认证</span>' : '<span class="op-badge warn">未认证</span>') +
+        '<span class="op-badge credit">信用等级 ' + levelText + '</span>';
+    } catch (e) {
+      el.innerHTML = '<span class="op-badge muted">信用等级 —</span>';
+    }
+  }
+
   // 渲染顶栏"当前操作员"的头像 + 昵称 + ID
   async function renderActiveAccountHeader() {
     const activeName = document.getElementById('active-account-name');
@@ -1260,6 +1283,8 @@
     const displayName = pickAccountDisplayName(acc);
     if (activeName) activeName.textContent = displayName;
     if (activeId) activeId.textContent = `开发者 ID / ${DEVELOPER_ID}`;
+    // 信用等级 + 认证状态（随账号/工作室切换自动刷新）
+    loadDeveloperBadges(DEVELOPER_ID);
     if (activeAvatar) {
       const url = pickAccountAvatar(acc);
       if (url) {

@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 单游戏详情（热度、所在榜名次、评分等） */
   rankAppDetail: (appId) => ipcRenderer.invoke('bridge:rankAppDetail', appId),
 
+  /** 开发者信用等级 + 认证状态（随账号/工作室切换重新调用） */
+  developerBadges: (developerId) => ipcRenderer.invoke('bridge:developerBadges', developerId),
+
   /** 检查登录状态：返回 Promise<{status, developerId, profile, studios, ...}> */
   checkLogin: () => ipcRenderer.invoke('bridge:checkLogin'),
 

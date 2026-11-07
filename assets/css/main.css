@@ -1488,3 +1488,11 @@ html.explorer-on .api-panel { display: block; }
 .rank-chart-svg { width: 100%; height: 120px; display: block; }
 .rank-chart-meta { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-tertiary); margin-top: 2px; }
 .rank-detail-note { font-size: 11px; color: var(--text-tertiary); margin-top: 6px; }
+
+/* ==================== 信用等级徽标 ==================== */
+.op-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.op-badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg-muted); color: var(--text-tertiary); }
+.op-badge.ok { background: rgba(16, 185, 129, .12); color: #10b981; }
+.op-badge.warn { background: rgba(239, 68, 68, .12); color: #ef4444; }
+.op-badge.credit { background: rgba(37, 182, 233, .12); color: var(--taptap-cyan); }
+.op-badge.muted { color: var(--text-tertiary); }
