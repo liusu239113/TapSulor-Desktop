@@ -1568,3 +1568,10 @@ html.explorer-on .api-panel { display: block; }
 .withdraw-min { margin-left: 8px; font-size: 11px; color: var(--text-tertiary); font-weight: 400; }
 .withdraw-status { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
 .withdraw-status b { color: var(--text-primary); }
+
+/* 本月收益瓦片里的提现按钮 */
+.stat-tile-month .stat-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.stat-tile-month .withdraw-all-btn { margin-top: 0; padding: 3px 10px; font-size: 11px; }
+
+/* hidden 属性必须能真正隐藏弹窗（否则 CSS display 会覆盖，形成隐形全屏遮罩挡住点击） */
+.withdraw-modal[hidden] { display: none !important; }

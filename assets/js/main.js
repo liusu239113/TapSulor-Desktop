@@ -976,7 +976,7 @@
     list.innerHTML = '';
     confirmBtn.disabled = true;
     confirmBtn.textContent = '确认提现';
-    note.textContent = '最低提现 5 元/笔；余额不足的游戏会自动跳过。';
+    note.textContent = '最低提现 100 元/笔；未满 100 元的游戏会自动跳过。';
 
     const api = window.electronAPI;
     if (!api || typeof api.withdrawPreview !== 'function') {
@@ -1037,7 +1037,7 @@
       wdArmTimer = setTimeout(() => {
         wdArmed = false;
         confirmBtn.textContent = '确认提现 ' + eligible.length + ' 个游戏';
-        note.textContent = '最低提现 5 元/笔；余额不足的游戏会自动跳过。';
+        note.textContent = '最低提现 100 元/笔；未满 100 元的游戏会自动跳过。';
       }, 10000);
       return;
     }

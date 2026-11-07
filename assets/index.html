@@ -69,7 +69,6 @@
         </div>
         <div class="stat-tile-value" id="summary-total">¥0.00</div>
         <div class="stat-tile-meta" id="summary-total-meta">等待数据同步</div>
-        <button type="button" class="withdraw-all-btn" id="withdraw-all-btn" hidden>一键提现</button>
       </div>
       <div class="stat-tile stat-tile-yesterday">
         <div class="stat-tile-head">
@@ -81,6 +80,7 @@
       <div class="stat-tile stat-tile-month">
         <div class="stat-tile-head">
           <span class="stat-tile-tag">本月广告收益</span>
+          <button type="button" class="withdraw-all-btn" id="withdraw-all-btn" hidden>一键提现</button>
         </div>
         <div class="stat-tile-value" id="summary-month">¥0.00</div>
         <div class="stat-tile-meta" id="summary-month-meta">
@@ -175,7 +175,7 @@
         <p class="withdraw-desc">逐个游戏按<strong>全部可提现余额</strong>发起提现，每月 28 日更新上月收益；提交后不可撤销。</p>
         <div class="withdraw-summary" id="withdraw-summary">正在查询各游戏余额…</div>
         <div class="withdraw-list" id="withdraw-list"></div>
-        <p class="withdraw-note" id="withdraw-note">最低提现 5 元/笔；余额不足的游戏会自动跳过。</p>
+        <p class="withdraw-note" id="withdraw-note">最低提现 100 元/笔；未满 100 元的游戏会自动跳过。</p>
         <footer class="withdraw-foot">
           <button type="button" class="withdraw-btn ghost" id="withdraw-status">刷新状态</button>
           <button type="button" class="withdraw-btn ghost" id="withdraw-refresh">刷新余额</button>
