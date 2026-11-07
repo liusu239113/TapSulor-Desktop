@@ -946,6 +946,27 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     winContents.on('did-navigate', (ev, url) => onPageEvent(url));
     winContents.on('did-navigate-in-page', (ev, url) => onPageEvent(url));
 
+    // 诊断：登录窗口内页面 JS 报错
+    winContents.on('console-message', (ev, level, message, line, sourceId) => {
+      if (level >= 2) appLog('[login][page-error]', String(message).slice(0, 200), '@', String(sourceId).slice(0, 80));
+    });
+
+    // 诊断：二维码页所有网络请求的成败（定位扫码轮询为何不动）
+    const diagFilter = { urls: ['*://accounts.taptap.cn/*', '*://*.taptap.cn/*'] };
+    const netOnCompleted = (details) => {
+      if (!loginWindow || loginWindow.isDestroyed()) return;
+      if (details.webContentsId !== winContents.webContentsId) return;
+      if (details.resourceType === 'image' || details.resourceType === 'stylesheet' || details.resourceType === 'font') return;
+      appLog('[login][net]', details.responseStatusCode || '?', details.url.slice(0, 140));
+    };
+    const netOnError = (details) => {
+      if (!loginWindow || loginWindow.isDestroyed()) return;
+      if (details.webContentsId !== winContents.webContentsId) return;
+      appLog('[login][net-ERR]', details.errorText, details.url.slice(0, 140));
+    };
+    session.defaultSession.webRequest.onCompleted(diagFilter, netOnCompleted);
+    session.defaultSession.webRequest.onErrorOccurred(diagFilter, netOnError);
+
     winContents.on('will-navigate', (ev, url) => {
       try {
         const u = new URL(url);
