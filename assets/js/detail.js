@@ -955,6 +955,8 @@
       }
     }
     if (card) card.hidden = !isTrend;
+    // 先确保 REP 卡片已创建，再设置显隐（否则首次点击时卡片尚不存在，hidden 未被清除）
+    if (isRep) ensureRepCard();
     const repCard = document.getElementById('rep-card');
     if (repCard) repCard.hidden = !isRep;
     if (calHeader) calHeader.style.display = (isTrend || isRep) ? 'none' : '';
@@ -990,7 +992,12 @@
   function renderRep(rev) {
     const card = ensureRepCard();
     if (!card) return;
-    const y = (fen) => (fen == null ? '—' : '¥' + fmt(fenToYuan(fen)));
+    const y = (fen) => {
+      if (fen == null) return '—';
+      const yuan = fenToYuan(fen);
+      if (yuan === null) return '—';
+      return (yuan < 0 ? '-¥' : '¥') + fmt(Math.abs(yuan));
+    };
     const signCls = (fen) => {
       const n = Number(fen);
       if (!Number.isFinite(n) || n === 0) return '';
@@ -1000,12 +1007,14 @@
       '<div class="rep-title">REP 平台收益<span class="rep-unit">资源置换 · 单位已换算为元</span></div>' +
       '<div class="rep-grid">' +
         '<div class="rep-tile rep-main"><div class="rep-label">本月收益</div><div class="rep-value">' + y(rev.current_month_revenue) + '</div></div>' +
-        '<div class="rep-tile"><div class="rep-label">昨日收益</div><div class="rep-value">' + y(rev.yesterday_revenue) + '</div></div>' +
         '<div class="rep-tile"><div class="rep-label">今日收益</div><div class="rep-value">' + y(rev.today_revenue) + '</div></div>' +
-        '<div class="rep-tile"><div class="rep-label">通用现金券余额</div><div class="rep-value">' + y(rev.default_wallet_balance) + '</div></div>' +
-        '<div class="rep-tile"><div class="rep-label">分平台总余额</div><div class="rep-value' + signCls(rev.platform_wallet_balance) + '">' + y(rev.platform_wallet_balance) + '</div></div>' +
-        '<div class="rep-tile"><div class="rep-label">iOS 余额</div><div class="rep-value' + signCls(rev.ios_wallet_balance) + '">' + y(rev.ios_wallet_balance) + '</div></div>' +
-        '<div class="rep-tile"><div class="rep-label">Android 余额</div><div class="rep-value' + signCls(rev.android_wallet_balance) + '">' + y(rev.android_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">昨日收益</div><div class="rep-value">' + y(rev.yesterday_revenue) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">通用钱包余额</div><div class="rep-value">' + y(rev.default_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">分平台钱包余额</div><div class="rep-value' + signCls(rev.platform_wallet_balance) + '">' + y(rev.platform_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">iOS 钱包余额</div><div class="rep-value' + signCls(rev.ios_wallet_balance) + '">' + y(rev.ios_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">Android 钱包余额</div><div class="rep-value' + signCls(rev.android_wallet_balance) + '">' + y(rev.android_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">昨日消耗</div><div class="rep-value">' + y(rev.yesterday_expense) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">昨日 REP 转化</div><div class="rep-value">' + (rev.yesterday_transformation == null ? '—' : String(rev.yesterday_transformation)) + '</div></div>' +
       '</div>' +
       '<div class="rep-note">数据来自 REP 资源置换平台（rep.taptap.cn），与广告收益相互独立，不计入上方累计收益</div>';
   }
