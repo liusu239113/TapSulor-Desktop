@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 带 cookie 的 fetch：返回 Promise<{ok, status, body, error}> */
   fetch: (url) => ipcRenderer.invoke('bridge:fetch', url),
 
+  /** REP 平台收益（rep.taptap.cn）：传入 appId，返回 Promise<{ok, status, body, error}>
+   *  body 为 JSON 字符串，金额单位为「分」（除以 100 得元）。SSO 自动登录，无需用户操作。 */
+  repRevenue: (appId) => ipcRenderer.invoke('bridge:repRevenue', appId),
+
   /** 检查登录状态：返回 Promise<{status, developerId, profile, studios, ...}> */
   checkLogin: () => ipcRenderer.invoke('bridge:checkLogin'),
 

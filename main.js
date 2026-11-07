@@ -503,6 +503,68 @@ ipcMain.handle('bridge:fetch', async (event, url) => {
   }
 });
 
+// ====== REP 平台（rep.taptap.cn）数据桥接 ======
+// REP 与开发者后台共用 TapTap 账号 SSO 登录态：
+// 静默打开 rep.taptap.cn → SSO 自动写入 localStorage['op-jwt-token'] → 带令牌调用 tap-op 接口
+let repTokenCache = { token: null, fetchedAt: 0 };
+const REP_TOKEN_TTL = 4 * 60 * 60 * 1000; // 4 小时后强制刷新
+
+async function getRepToken() {
+  if (repTokenCache.token && Date.now() - repTokenCache.fetchedAt < REP_TOKEN_TTL) {
+    return repTokenCache.token;
+  }
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  try {
+    await win.loadURL('https://rep.taptap.cn/');
+    // SSO 静默跳转完成后令牌会写入 localStorage，轮询等待其出现（最多 20s）
+    const token = await new Promise((resolve) => {
+      let tries = 0;
+      const timer = setInterval(async () => {
+        tries += 1;
+        try {
+          const t = await win.webContents.executeJavaScript('localStorage.getItem("op-jwt-token") || null');
+          if (t) { clearInterval(timer); resolve(t); return; }
+        } catch (_) { /* 页面跳转中 executeJavaScript 可能短暂失败，忽略 */ }
+        if (tries >= 40) { clearInterval(timer); resolve(null); }
+      }, 500);
+    });
+    if (token) repTokenCache = { token, fetchedAt: Date.now() };
+    return token;
+  } finally {
+    try { win.destroy(); } catch (_) {}
+  }
+}
+
+ipcMain.handle('bridge:repRevenue', async (event, appId) => {
+  try {
+    const token = await getRepToken();
+    if (!token) return { ok: false, status: 0, body: null, error: 'REP_TOKEN_FAIL' };
+    const developerId = activeDeveloperId || '';
+    const response = await net.fetch('https://tap-op.tapapis.cn/rep/be/v1/dashboard/revenue', {
+      method: 'GET',
+      headers: {
+        'Authorization': token,
+        'x-app-id': String(appId),
+        'x-developer-id': String(developerId),
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': DESKTOP_UA,
+        'Referer': 'https://rep.taptap.cn/',
+      },
+    });
+    const body = await response.text();
+    // 令牌失效时清缓存，下次调用重新走 SSO 获取
+    if (response.status === 401 || response.status === 403) {
+      repTokenCache = { token: null, fetchedAt: 0 };
+    }
+    return { ok: response.ok, status: response.status, body, error: null };
+  } catch (err) {
+    return { ok: false, status: 0, body: null, error: err.message };
+  }
+});
+
 // 检查登录状态
 ipcMain.handle('bridge:checkLogin', async () => {
   try {

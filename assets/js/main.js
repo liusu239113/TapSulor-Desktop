@@ -835,26 +835,26 @@
                      <div class="game-metric-label">昨日广告收益 ${momRev}</div>`;
       }
 
-      // 日活 + 转化率块
+      // 日活 + ARPU 块（ARPU = 昨日广告收益 ÷ 昨日日活）
       let dauHTML;
       if (!g.published) {
         dauHTML = `<div class="game-metric-value muted">—</div>
                    <div class="game-metric-label">昨日日活</div>
-                   <div class="game-metric-sub muted">转化率 —</div>`;
+                   <div class="game-metric-sub muted">ARPU —</div>`;
       } else if (g.dauLoading) {
         dauHTML = `<div class="game-metric-value muted">加载中</div>
                    <div class="game-metric-label">昨日日活</div>
-                   <div class="game-metric-sub muted">转化率 —</div>`;
+                   <div class="game-metric-sub muted">ARPU —</div>`;
       } else if (g.todayDAU == null) {
         dauHTML = `<div class="game-metric-value muted">—</div>
                    <div class="game-metric-label">昨日日活</div>
-                   <div class="game-metric-sub muted">转化率 —</div>`;
+                   <div class="game-metric-sub muted">ARPU —</div>`;
       } else {
         const arpu = g.todayDAU > 0 && g.todayRevenue != null ? (g.todayRevenue / g.todayDAU) : null;
         const momDau = momTagHTML(g.todayDAU, g.prevDayDAU);
         dauHTML = `<div class="game-metric-value">${(g.todayDAU||0).toLocaleString('zh-CN')}</div>
                    <div class="game-metric-label">昨日日活 ${momDau}</div>
-                   <div class="game-metric-sub">${arpu == null ? '转化率 —' : `转化率 ${(arpu * 100).toFixed(1)}%`}</div>`;
+                   <div class="game-metric-sub">${arpu == null ? 'ARPU —' : `ARPU ¥${arpu.toFixed(4)}`}</div>`;
       }
 
       // 本月数据块

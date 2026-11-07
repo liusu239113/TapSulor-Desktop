@@ -917,10 +917,12 @@
     sw.id = 'view-switch';
     const calIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
     const trendIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>';
+    const repIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8 9.5l4 3.5 4-3.5"/><path d="M12 13v4.5"/></svg>';
     sw.innerHTML =
       '<span class="vs-thumb"></span>' +
       '<button class="vs-btn is-active" data-view="calendar">' + calIcon + '<span>日历</span></button>' +
-      '<button class="vs-btn" data-view="trend">' + trendIcon + '<span>趋势</span></button>';
+      '<button class="vs-btn" data-view="trend">' + trendIcon + '<span>趋势</span></button>' +
+      '<button class="vs-btn" data-view="rep">' + repIcon + '<span>REP</span></button>';
     header.parentNode.insertBefore(sw, header);
     sw.addEventListener('click', (e) => {
       const btn = e.target.closest('.vs-btn');
@@ -933,20 +935,105 @@
   function setView(view) {
     currentView = view;
     const isTrend = view === 'trend';
+    const isRep = view === 'rep';
     const sw = document.getElementById('view-switch');
     const card = document.getElementById('trend-card');
     const calHeader = document.querySelector('.cal-header');
     const grid = document.getElementById('daily-grid');
     if (sw) {
       sw.classList.toggle('is-trend', isTrend);
+      sw.classList.toggle('is-rep', isRep);
       sw.querySelectorAll('.vs-btn').forEach(b => {
         b.classList.toggle('is-active', b.getAttribute('data-view') === view);
       });
     }
     if (card) card.hidden = !isTrend;
-    if (calHeader) calHeader.style.display = isTrend ? 'none' : '';
-    if (grid) grid.style.display = isTrend ? 'none' : '';
+    const repCard = document.getElementById('rep-card');
+    if (repCard) repCard.hidden = !isRep;
+    if (calHeader) calHeader.style.display = (isTrend || isRep) ? 'none' : '';
+    if (grid) grid.style.display = (isTrend || isRep) ? 'none' : '';
     if (isTrend && currentMonthData) renderTrendChart(currentMonthData);
+    if (isRep) loadRepRevenue();
+  }
+
+  // ========== REP 平台收益视图 ==========
+  // 数据源：rep.taptap.cn（与开发者后台独立），金额接口单位为「分」
+  let repData = null;
+  let repLoading = false;
+  let repError = null;
+
+  function fenToYuan(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n / 100 : null;
+  }
+
+  function ensureRepCard() {
+    let card = document.getElementById('rep-card');
+    if (card) return card;
+    const header = document.querySelector('.cal-header');
+    if (!header) return null;
+    card = document.createElement('div');
+    card.className = 'rep-card';
+    card.id = 'rep-card';
+    card.hidden = true;
+    header.parentNode.insertBefore(card, header);
+    return card;
+  }
+
+  function renderRep(rev) {
+    const card = ensureRepCard();
+    if (!card) return;
+    const y = (fen) => (fen == null ? '—' : '¥' + fmt(fenToYuan(fen)));
+    const signCls = (fen) => {
+      const n = Number(fen);
+      if (!Number.isFinite(n) || n === 0) return '';
+      return n > 0 ? ' rep-pos' : ' rep-neg';
+    };
+    card.innerHTML =
+      '<div class="rep-title">REP 平台收益<span class="rep-unit">资源置换 · 单位已换算为元</span></div>' +
+      '<div class="rep-grid">' +
+        '<div class="rep-tile rep-main"><div class="rep-label">本月收益</div><div class="rep-value">' + y(rev.current_month_revenue) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">昨日收益</div><div class="rep-value">' + y(rev.yesterday_revenue) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">今日收益</div><div class="rep-value">' + y(rev.today_revenue) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">通用现金券余额</div><div class="rep-value">' + y(rev.default_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">分平台总余额</div><div class="rep-value' + signCls(rev.platform_wallet_balance) + '">' + y(rev.platform_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">iOS 余额</div><div class="rep-value' + signCls(rev.ios_wallet_balance) + '">' + y(rev.ios_wallet_balance) + '</div></div>' +
+        '<div class="rep-tile"><div class="rep-label">Android 余额</div><div class="rep-value' + signCls(rev.android_wallet_balance) + '">' + y(rev.android_wallet_balance) + '</div></div>' +
+      '</div>' +
+      '<div class="rep-note">数据来自 REP 资源置换平台（rep.taptap.cn），与广告收益相互独立，不计入上方累计收益</div>';
+  }
+
+  async function loadRepRevenue() {
+    const card = ensureRepCard();
+    if (!card) return;
+    if (repData) { renderRep(repData); return; }
+    if (repLoading) return;
+    if (repError) { card.innerHTML = '<div class="rep-empty">' + repError + '</div>'; return; }
+    if (!window.electronAPI || typeof window.electronAPI.repRevenue !== 'function') {
+      card.innerHTML = '<div class="rep-empty">当前端暂不支持 REP 数据</div>';
+      return;
+    }
+    repLoading = true;
+    card.innerHTML = '<div class="rep-empty">REP 收益同步中…</div>';
+    try {
+      const appId = initialAppId || (currentGame && currentGame.appId);
+      if (!appId) throw new Error('缺少游戏 ID');
+      const res = await window.electronAPI.repRevenue(appId);
+      if (!res || !res.ok) {
+        throw new Error(res && res.error === 'REP_TOKEN_FAIL'
+          ? 'REP 登录态获取失败，请先在设置中登录开发者后台'
+          : 'REP 接口请求失败' + (res && res.status ? ' (' + res.status + ')' : ''));
+      }
+      const json = JSON.parse(res.body);
+      if (json && json.code) throw new Error(json.message || 'REP 返回异常');
+      repData = json || {};
+      renderRep(repData);
+    } catch (e) {
+      repError = 'REP 收益获取失败：' + (e && e.message ? e.message : e);
+      card.innerHTML = '<div class="rep-empty">' + repError + '</div>';
+    } finally {
+      repLoading = false;
+    }
   }
 
   function ensureTrendCard() {
