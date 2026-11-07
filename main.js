@@ -967,6 +967,31 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     session.defaultSession.webRequest.onCompleted(diagFilter, netOnCompleted);
     session.defaultSession.webRequest.onErrorOccurred(diagFilter, netOnError);
 
+    // 诊断：CDP 全量抓取（含 WebSocket 握手），解决普通 webRequest 看不到长连接的问题
+    try {
+      winContents.debugger.attach('1.3');
+      winContents.debugger.sendCommand('Network.enable', { maxPostDataSize: 4096 }).then(() => {
+        appLog('[login][cdp] attached');
+      }).catch((e) => appLog('[login][cdp] enable fail', String(e).slice(0, 100)));
+      winContents.on('debugger-message', (ev, method, params) => {
+        try {
+          if (method === 'Network.requestWillBeSent') {
+            const u = params.request.url;
+            if (u.startsWith('data:') || u.includes('sentry') || u.endsWith('.png') || u.endsWith('.woff2')) return;
+            appLog('[login][cdp-req]', params.type || '?', u.slice(0, 170));
+          } else if (method === 'Network.webSocketCreated') {
+            appLog('[login][cdp-WS-CREATE]', params.url.slice(0, 170));
+          } else if (method === 'Network.webSocketClosed') {
+            appLog('[login][cdp-WS-CLOSED]');
+          } else if (method === 'Network.responseReceived' && params.response && params.response.status >= 400) {
+            appLog('[login][cdp-BAD]', params.response.status, params.response.url.slice(0, 150));
+          }
+        } catch (_) {}
+      });
+    } catch (e) {
+      appLog('[login] debugger attach fail:', String(e).slice(0, 120));
+    }
+
     winContents.on('will-navigate', (ev, url) => {
       try {
         const u = new URL(url);
