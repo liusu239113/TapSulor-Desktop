@@ -532,6 +532,7 @@ async function getRepToken() {
       }, 500);
     });
     if (token) repTokenCache = { token, fetchedAt: Date.now() };
+    appLog('[rep] token fetch:', token ? 'ok' : 'FAILED');
     return token;
   } finally {
     try { win.destroy(); } catch (_) {}
@@ -565,6 +566,14 @@ ipcMain.handle('bridge:repRevenue', async (event, appId) => {
   }
 });
 
+// ====== 诊断日志（登录链路排障用） ======
+const LOG_FILE = path.join(DATA_DIR, 'app.log');
+function appLog(...args) {
+  try {
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ` + args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n', 'utf-8');
+  } catch (_) {}
+}
+
 // 检查登录状态
 ipcMain.handle('bridge:checkLogin', async () => {
   try {
@@ -576,10 +585,12 @@ ipcMain.handle('bridge:checkLogin', async () => {
 
     // 无 cookie 且无本地账号 → 未登录
     if (!hasSession && !accounts.current) {
+      appLog('[checkLogin] unauthenticated: no session cookie, no local account');
       return { status: 'unauthenticated', developerId: null, error: null, profile: null, studios: [] };
     }
 
     const result = await probeDeveloperId();
+    appLog('[checkLogin] probe result:', result ? ('hit ' + result.developerId) : 'miss', '| hasSession =', hasSession);
 
     if (result) {
       upsertAccountFromProbe(result, { mode: 'login' });
@@ -786,6 +797,7 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       loginWindow.focus();
       return resolve({ success: false, reason: 'already_open' });
     }
+    appLog('[login] openLogin start, mode =', mode || 'normal');
 
     loginWindow = new BrowserWindow({
       width: 1000,
@@ -830,6 +842,7 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
     const finish = (result) => {
       if (resolved) return;
       resolved = true;
+      appLog('[login] finish:', result);
       if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
       resolve(result);
       if (mainWindow) mainWindow.webContents.send('login-check');
@@ -837,6 +850,7 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
 
     const saveAndFinish = async (developerId) => {
       if (!developerId || !/^\d+$/.test(developerId)) return;
+      appLog('[login] saveAndFinish, developerId =', String(developerId));
 
       const result = await probeDeveloperId();
       if (!result) {
@@ -900,8 +914,9 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
           } catch (e) { return null; }
         })()
       `).then((result) => {
+        if (result) appLog('[login] jsCheck result:', String(result));
         if (result && !resolved) saveAndFinish(String(result));
-      }).catch(() => {});
+      }).catch((e) => { appLog('[login] jsCheck error:', String(e).slice(0, 120)); });
     };
 
     const nativeCheck = async () => {
@@ -909,14 +924,17 @@ ipcMain.handle('bridge:openLogin', (event, mode) => {
       nativeCheckAttempts++;
       const result = await probeDeveloperId();
       if (result && !resolved) {
+        appLog('[login] nativeCheck hit, developerId =', String(result.developerId));
         saveAndFinish(result.developerId);
       } else if (!resolved) {
+        if (nativeCheckAttempts <= 3) appLog('[login] nativeCheck miss #' + nativeCheckAttempts);
         setTimeout(nativeCheck, 1800);
       }
     };
 
     const onPageEvent = (url) => {
       if (resolved) return;
+      appLog('[login] nav ->', String(url).slice(0, 160));
       const idFromUrl = extractDeveloperIdFromUrl(url);
       if (idFromUrl) { saveAndFinish(idFromUrl); return; }
       setTimeout(jsCheck, 900);
