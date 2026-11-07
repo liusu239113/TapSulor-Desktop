@@ -946,6 +946,13 @@
       sw.querySelectorAll('.vs-btn').forEach(b => {
         b.classList.toggle('is-active', b.getAttribute('data-view') === view);
       });
+      // 滑块按激活按钮的实际位置定位，避免 CSS 百分比在按钮宽度不等时错位
+      const thumb = sw.querySelector('.vs-thumb');
+      const activeBtn = sw.querySelector('.vs-btn.is-active');
+      if (thumb && activeBtn) {
+        thumb.style.width = activeBtn.offsetWidth + 'px';
+        thumb.style.transform = 'translateX(' + Math.max(0, activeBtn.offsetLeft - 3) + 'px)';
+      }
     }
     if (card) card.hidden = !isTrend;
     const repCard = document.getElementById('rep-card');

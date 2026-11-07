@@ -520,7 +520,10 @@ async function getRepToken() {
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
   try {
-    await win.loadURL('https://rep.taptap.cn/');
+    // 直接打开控制台 URL：rep.taptap.cn 根路径是营销落地页，不会触发 SSO；
+    // 控制台 URL 会静默走 TapTap 授权并写入 op-jwt-token
+    const developerId = activeDeveloperId || '';
+    await win.loadURL('https://rep.taptap.cn/' + developerId + '/');
     // SSO 静默跳转完成后令牌会写入 localStorage，轮询等待其出现（最多 40s）
     const token = await new Promise((resolve) => {
       let tries = 0;
