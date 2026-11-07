@@ -394,7 +394,9 @@ function createWindow() {
     callback(true);
   });
 
-  const filter = { urls: ['*://*.taptap.cn/*', '*://*.taptap.com/*'] };
+  // 只改写开发者后台 API 的请求头；不得触碰 accounts.taptap.cn（二维码登录页）——
+  // 此前对所有 *.taptap.cn 强改 Referer/UA，导致扫码状态轮询失败，扫码后页面卡死不跳转
+  const filter = { urls: ['*://developer.taptap.cn/*'] };
   session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     details.requestHeaders['Referer'] = TAPTAP_REFERER;
     details.requestHeaders['User-Agent'] = DESKTOP_UA;
@@ -1102,6 +1104,30 @@ app.whenReady().then(() => {
     sameSite: 'no_restriction',
     secure: true,
   }).catch(() => {});
+
+  // 启动时若 defaultSession 没有会话 Cookie，恢复当前账号已保存的 Cookie，
+  // 避免本地已有账号却仍要求重新扫码登录
+  (async () => {
+    try {
+      if (accounts.current) {
+        const cookies = await session.defaultSession.cookies.get({ domain: '.taptap.cn' });
+        const hasSession = cookies.some(c =>
+          (c.name === 'sessionid' || c.name === 'taptap_session' || c.name === 'sid'
+           || c.name === 'taptap_access_token' || c.name.startsWith('tt_')) && c.value
+        );
+        appLog('[boot] hasSession =', hasSession, '| current account =', accounts.current);
+        if (!hasSession) {
+          await restoreAccountCookies(accounts.current);
+          appLog('[boot] 已从本地账号恢复 Cookie');
+        }
+      } else {
+        appLog('[boot] 无本地账号，等待用户登录');
+      }
+    } catch (e) {
+      appLog('[boot] restore error:', String(e).slice(0, 150));
+    }
+  })();
+
   createWindow();
 
   // 启动 3 秒后静默检查更新（对齐 Android UpdateChecker 冷启动后 3s）
