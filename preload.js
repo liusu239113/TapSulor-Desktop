@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   rankHistory: (board, appId, full) => ipcRenderer.invoke('bridge:rankHistory', board, appId || null, !!full),
   /** 单游戏详情（热度、所在榜名次、评分等） */
   rankAppDetail: (appId) => ipcRenderer.invoke('bridge:rankAppDetail', appId),
+  /** 今日游戏日历（首发/测试/预约） */
+  rankCalendar: (dayTs) => ipcRenderer.invoke('bridge:rankCalendar', dayTs),
 
   /** 开发者信用等级 + 认证状态（随账号/工作室切换重新调用） */
   developerBadges: (developerId) => ipcRenderer.invoke('bridge:developerBadges', developerId),

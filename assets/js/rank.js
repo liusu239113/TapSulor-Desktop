@@ -16,6 +16,8 @@
     { key: 'game_jam', label: '聚光灯榜', total: 100 }
   ];
   const MAKER_TAG = 'TapTap制造';
+  // TapTap「今日游戏」日历：首发 / 测试 / 预约
+  const CAL_URL = 'https://www.taptap.cn/webapiv2/calendar/v1/event-list';
   const PAGE_SIZE = 10;
   const REFRESH_MS = 20 * 60 * 1000; // 对齐官方「每 20 分钟更新」
 
@@ -25,6 +27,9 @@
     data: {},              // key -> items[]
     history: {},           // key -> snapshots[]
     loadedAt: null,
+    cal: null,          // 今日游戏日历缓存
+    calError: null,
+    calFilter: 'all',   // all | maker | non
     loading: false,
     timer: null
   };
@@ -252,6 +257,12 @@
     renderTags();
     $('rank-updated').textContent = state.loadedAt ? ('更新于 ' + fmtTime(state.loadedAt) + ' · 每 20 分钟') : '尚未加载';
 
+    if (board === 'today') {
+      list.hidden = false;
+      summary.hidden = true;
+      loadToday(true);
+      return;
+    }
     if (board === 'summary') {
       list.hidden = true;
       summary.hidden = false;
@@ -558,6 +569,11 @@
       tagBar.addEventListener('click', (e) => {
         const btn = e.target.closest('.rank-tag');
         if (!btn) return;
+        if (btn.getAttribute('data-cal')) {
+          state.calFilter = btn.getAttribute('data-cal');
+          renderToday();
+          return;
+        }
         state.tag = btn.getAttribute('data-tag') || '';
         render();
       });

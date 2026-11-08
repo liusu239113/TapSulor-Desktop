@@ -1581,3 +1581,9 @@ html.explorer-on .api-panel { display: block; }
 
 /* hidden 属性必须能真正隐藏弹窗（否则 CSS display 会覆盖，形成隐形全屏遮罩挡住点击） */
 .withdraw-modal[hidden] { display: none !important; }
+
+/* ==================== 今日游戏（日历） ==================== */
+.cal-group { margin-bottom: 14px; }
+.cal-group-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text-primary); padding: 6px 4px 8px; border-bottom: 2px solid var(--text-primary); }
+.cal-group-title span { font-size: 11px; font-weight: 600; color: var(--text-tertiary); background: var(--bg-muted); border-radius: 999px; padding: 1px 8px; }
+.cal-badge { font-size: 11px !important; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: rgba(37,182,233,.14); color: var(--taptap-cyan); white-space: nowrap; }

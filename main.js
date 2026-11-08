@@ -1017,6 +1017,20 @@ ipcMain.handle('bridge:withdrawExecute', async (event, appIds) => {
   }
 });
 
+// 今日游戏日历（首发/测试/预约）
+ipcMain.handle('bridge:rankCalendar', async (event, dayTs) => {
+  try {
+    const day = Number.isFinite(dayTs) ? dayTs : Math.floor(new Date(new Date().toDateString()).getTime() / 1000);
+    const url = `https://www.taptap.cn/webapiv2/calendar/v1/event-list?day=${day}&X-UA=${rankXua()}`;
+    const resp = await net.fetch(url, {
+      headers: { 'User-Agent': DESKTOP_UA, 'Accept': 'application/json, text/plain, */*', 'Referer': 'https://www.taptap.cn/' },
+    });
+    return { ok: resp.ok, status: resp.status, body: await resp.text(), error: null };
+  } catch (err) {
+    return { ok: false, status: 0, body: null, error: err.message };
+  }
+});
+
 // 检查登录状态
 ipcMain.handle('bridge:checkLogin', async () => {
   try {
