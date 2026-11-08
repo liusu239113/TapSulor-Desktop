@@ -669,7 +669,7 @@ function appLog(...args) {
 // ====== 热度榜（public 榜单，免登录） ======
 const RANK_HISTORY_FILE = path.join(DATA_DIR, 'rank-history.json');
 const RANK_BOARDS = ['hot', 'new', 'game_jam'];
-const RANK_KEEP_SNAPSHOTS = 72; // 每榜保留最近 72 个整点快照（约 3 天）
+const RANK_KEEP_SNAPSHOTS = 200; // 每榜保留最近 200 个整点快照（约 8 天，支持按周对比）
 let rankUid = null;
 function getRankUid() {
   if (rankUid) return rankUid;

@@ -29,7 +29,8 @@
     loadedAt: null,
     cal: null,          // 今日游戏日历缓存
     calError: null,
-    calFilter: 'all',   // all | maker | non
+    calFilter: 'all',
+    range: 1,           // 涨幅基准：1 小时 / 24 小时   // all | maker | non
     loading: false,
     timer: null
   };
@@ -141,9 +142,11 @@
   function baseline(key) {
     const arr = state.history[key] || [];
     if (!arr.length) return null;
-    const target = Date.now() - 60 * 60 * 1000;
+    const hours = Number(state.range) || 1;
+    const target = Date.now() - hours * 60 * 60 * 1000;
     let pick = null;
     for (const s of arr) if (s.ts <= target) pick = s;
+    // 没有足够久的历史时，用最早的点兜底，并在提示里说明
     return pick || arr[0];
   }
   function deltaFor(key, item) {
@@ -286,7 +289,7 @@
     }
     const base = baseline(board);
     list.innerHTML =
-      '<div class="rank-hint">' + (state.tag ? ('筛选：' + state.tag + ' · 共 ' + items.length + ' 款 · ') : '') + (base ? ('变化基准：' + fmtTime(base.ts) + (base.ts > Date.now() - 3600000 ? '（运行不足 1 小时，暂用最早快照）' : '')) : '首次运行，本小时后开始记录变化') + '</div>' +
+      '<div class="rank-hint">' + (state.tag ? ('筛选：' + state.tag + ' · 共 ' + items.length + ' 款 · ') : '') + (base ? ('变化基准：' + fmtTime(base.ts) + (base.ts > Date.now() - Number(state.range) * 3600 * 1000 ? '（历史不足，暂用最早快照）' : '')) : '首次运行，本小时后开始记录变化') + '</div>' +
       items.map(it => rowHTML(it, board)).join('');
     bindRows();
     updateScrollButtons();
@@ -563,6 +566,14 @@
       $('rank-boards').querySelectorAll('.rank-board').forEach(b => b.classList.toggle('is-active', b === btn));
       render();
     });
+    const rangeSel = $('rank-range');
+    if (rangeSel) {
+      rangeSel.value = String(state.range);
+      rangeSel.addEventListener('change', () => {
+        state.range = Number(rangeSel.value) || 1;
+        render();
+      });
+    }
     $('rank-refresh').addEventListener('click', () => loadAll(true));
     const tagBar = $('rank-tags');
     if (tagBar) {
