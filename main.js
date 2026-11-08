@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.4';
-const VERSION_CODE = 4;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.6';
+const VERSION_CODE = 6;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
 // 部分网络环境下该域名 HTTPS 会被中断（Chromium 内核报 ERR_CONNECTION_CLOSED），自动回退 http
 const UPDATE_URL_FALLBACK = 'http://ark.yanyususu.online/tapsulor/version.json';
