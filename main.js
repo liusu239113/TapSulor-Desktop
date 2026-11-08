@@ -1,10 +1,10 @@
-const { app, BrowserWindow, ipcMain, session, shell, net, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, net, dialog, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.6';
-const VERSION_CODE = 6;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.7';
+const VERSION_CODE = 7;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
 // 部分网络环境下该域名 HTTPS 会被中断（Chromium 内核报 ERR_CONNECTION_CLOSED），自动回退 http
 const UPDATE_URL_FALLBACK = 'http://ark.yanyususu.online/tapsulor/version.json';
@@ -12,6 +12,7 @@ const UPDATE_UA = `TapSulor/${APP_VERSION} (Windows)`;
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const TAPTAP_REFERER = 'https://developer.taptap.cn/';
 const TAPTAP_ORIGIN = 'https://developer.taptap.cn';
+app.isQuitting = false;
 const DATA_DIR = path.join(app.getPath('userData'), 'data');
 const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
 const PREFS_FILE = path.join(DATA_DIR, 'preferences.json');
@@ -392,6 +393,14 @@ function createWindow() {
 
   mainWindow.webContents.setUserAgent(DESKTOP_UA);
 
+  // 关闭窗口不退出：缩到托盘继续记录热度快照
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(true);
   });
@@ -716,6 +725,58 @@ function readRankHistory() {
 }
 function writeRankHistory(data) {
   try { fs.writeFileSync(RANK_HISTORY_FILE, JSON.stringify(data), 'utf-8'); } catch (_) {}
+}
+
+// 主进程后台记录：不依赖页面是否打开，每 20 分钟拉三榜写一次
+async function fetchBoardSnapshotItems(type, total) {
+  const items = [];
+  let from = 0;
+  let realTotal = total;
+  while (from < total) {
+    const url = `https://www.taptap.cn/webapiv2/app-top/v2/hits?type_name=${type}&from=${from}&limit=10&X-UA=${rankXua()}`;
+    const resp = await net.fetch(url, {
+      headers: { 'User-Agent': DESKTOP_UA, 'Accept': 'application/json, text/plain, */*', 'Referer': 'https://www.taptap.cn/top/download' },
+    });
+    if (!resp.ok) break;
+    const j = JSON.parse(await resp.text());
+    const list = (j.data && j.data.list) || [];
+    if (!list.length) break;
+    realTotal = (j.data && j.data.total) || total;
+    list.forEach((it, i) => {
+      const a = it.app || {};
+      if (!a.id) return;
+      items.push({ id: String(a.id), rank: from + i + 1, hits: (a.stat && a.stat.hits_total) || 0 });
+    });
+    from += 10;
+    if (from >= realTotal) break;
+  }
+  return items;
+}
+
+let rankRecordBusy = false;
+async function recordRankSnapshot() {
+  if (rankRecordBusy) return;
+  rankRecordBusy = true;
+  try {
+    const data = readRankHistory();
+    const now = Date.now();
+    for (const board of RANK_BOARDS) {
+      try {
+        const items = await fetchBoardSnapshotItems(board, board === 'hot' ? 150 : 100);
+        if (!items.length) continue;
+        const arr = Array.isArray(data[board]) ? data[board] : [];
+        const snap = { ts: now, items };
+        const last = arr[arr.length - 1];
+        if (last && now - last.ts < 5 * 60 * 1000) arr[arr.length - 1] = snap; else arr.push(snap);
+        arr.sort((a, b) => a.ts - b.ts);
+        data[board] = arr.slice(-RANK_KEEP_SNAPSHOTS);
+      } catch (_) { }
+    }
+    writeRankHistory(data);
+    appLog('[rank] 后台快照已记录', new Date(now).toISOString());
+  } finally {
+    rankRecordBusy = false;
+  }
 }
 
 // 保存当前整点快照（同一小时内重复调用会覆盖，只保留整点数据）
@@ -1685,13 +1746,36 @@ app.whenReady().then(() => {
   // 启动 3 秒后静默检查更新（对齐 Android UpdateChecker 冷启动后 3s）
   setTimeout(silentUpdateCheck, 3000);
 
-  app.on('activate', () => {
+  function createTray() {
+  try {
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'app-icon.png')).resize({ width: 16, height: 16 });
+    const tray = new Tray(icon);
+    tray.setToolTip('TapSulor');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: '打开主界面', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } else { createWindow(); } } },
+      { type: 'separator' },
+      { label: '退出 TapSulor', click: () => { app.isQuitting = true; app.quit(); } },
+    ]));
+    tray.on('double-click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+    tray.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+  } catch (e) { appLog('[tray] 创建失败', e.message); }
+}
+
+app.whenReady().then(() => {
+  createTray();
+  setTimeout(recordRankSnapshot, 5000);
+  setInterval(recordRankSnapshot, 20 * 60 * 1000);
+});
+
+app.on('before-quit', () => { app.isQuitting = true; });
+
+app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // 托盘常驻保活，真正退出走托盘菜单
 });
 
 setInterval(() => {
