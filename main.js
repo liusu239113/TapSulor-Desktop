@@ -1771,8 +1771,20 @@ async function filingScanAndReport() {
   if (!dev || !token || !preferences.filing_enabled) return;
   filingScanBusy = true;
   try {
-    const cookieHeader = (await filingCookies())
-      .map(c => `${c.name}=${c.value}`).join('; ');
+    const allCookies = await filingCookies();
+    const host = 'developer.taptap.cn';
+    const legal = c => /^[-\w.%=!~*()']*$/.test(c.name || '') && /^[^"';,\\s]*$/.test(c.value || '') &&
+      /^[-\w.%=!~*()']*$/.test(c.value || '');
+    let picked = allCookies.filter(c => legal(c)).filter(c => {
+      const d = String(c.domain || '').replace(/^\./, '').toLowerCase();
+      return d && (host === d || host.endsWith('.' + d));
+    });
+    if (!picked.length) picked = allCookies.filter(c => legal(c));
+    let cookieHeader = picked.map(c => `${c.name}=${c.value}`).join('; ');
+    while (cookieHeader.length > 6500 && picked.length) {
+      picked.pop();
+      cookieHeader = picked.map(c => `${c.name}=${c.value}`).join('; ');
+    }
     const headers = { 'User-Agent': DESKTOP_UA, 'Accept': 'application/json, text/plain, */*' };
     if (cookieHeader) headers['Cookie'] = cookieHeader;
 
