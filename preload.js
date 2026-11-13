@@ -108,6 +108,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTrayRefresh: (cb) => { window.__onTrayRefresh = cb; },
   onAppResume: (cb) => { window.__onAppResume = cb; },
   onAppBackgroundTick: (cb) => { window.__onAppBackgroundTick = cb; },
+
+  // ========== 备案提醒 ==========
+  filingState: () => ipcRenderer.sendSync('bridge:filingStateSync'),
+  filingSendCode: (email) => ipcRenderer.invoke('bridge:filingSendCode', email),
+  filingRegister: (email, code) => ipcRenderer.invoke('bridge:filingRegister', email, code),
+  filingRefresh: () => ipcRenderer.invoke('bridge:filingRefresh'),
+  filingDisable: () => ipcRenderer.invoke('bridge:filingDisable'),
+  filingEnable: () => ipcRenderer.invoke('bridge:filingEnable'),
+  filingTestMail: () => ipcRenderer.invoke('bridge:filingTestMail'),
 });
 
 // ========== 主进程 -> 渲染进程事件转发 ==========

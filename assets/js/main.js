@@ -1879,3 +1879,279 @@
     init();
   })();
 })();
+
+/* ==================== 备案提醒设置 ==================== */
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var CD_KEY = 'filing_code_cooldown_until';
+  var timer = null;
+  function init() {
+    var box = $('filing-block');
+    if (!box || box.dataset.bound) return;
+    box.dataset.bound = '1';
+    var email = $('filing-email'), code = $('filing-code'), send = $('filing-send-code');
+    var bind = $('filing-bind'), test = $('filing-test'), toggle = $('filing-toggle');
+    var statusEl = $('filing-status-text'), msg = $('filing-msg');
+    var st = { enabled: false, email: '', hasToken: false };
+
+    function say(t, kind) {
+      if (!msg) return;
+      msg.textContent = t || '';
+      msg.className = 'filing-msg' + (kind ? ' ' + kind : '');
+    }
+    function readState() { try { st = (window.electronAPI.filingState && window.electronAPI.filingState()) || {}; } catch (e) { st = {}; } }
+    function paint() {
+      readState();
+      if (st.email && !email.value) email.value = st.email;
+      if (st.hasToken) {
+        statusEl.textContent = '已绑定 · ' + (st.email || '');
+        statusEl.className = 'filing-status ok';
+        toggle.disabled = false;
+        toggle.checked = !!st.enabled;
+        test.hidden = false;
+        bind.textContent = '重新绑定';
+      } else {
+        statusEl.textContent = '未绑定';
+        statusEl.className = 'filing-status';
+        toggle.disabled = true;
+        toggle.checked = false;
+        test.hidden = true;
+        bind.textContent = '验证并绑定';
+      }
+    }
+    function runCountdown(until) {
+      clearInterval(timer);
+      function tick() {
+        var left = Math.ceil((until - Date.now()) / 1000);
+        if (left > 0) {
+          send.disabled = true;
+          send.textContent = left + ' 秒后重发';
+        } else {
+          clearInterval(timer); timer = null;
+          send.disabled = false;
+          send.textContent = '发送验证码';
+          try { localStorage.removeItem(CD_KEY); } catch (e) {}
+        }
+      }
+      tick();
+      timer = setInterval(tick, 1000);
+    }
+    function startCooldown(sec) {
+      var until = Date.now() + sec * 1000;
+      try { localStorage.setItem(CD_KEY, String(until)); } catch (e) {}
+      runCountdown(until);
+    }
+    function resumeCooldown() {
+      try {
+        var until = Number(localStorage.getItem(CD_KEY) || 0);
+        if (until > Date.now()) runCountdown(until);
+      } catch (e) {}
+    }
+
+    if (!window.electronAPI || !window.electronAPI.filingRegister) { statusEl.textContent = '当前版本不支持'; return; }
+
+    send.addEventListener('click', async function () {
+      if (send.disabled) return;
+      var e = (email.value || '').trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { say('请先填写正确的收件邮箱', 'err'); email.focus(); return; }
+      send.disabled = true;
+      send.textContent = '发送中…';
+      say('正在发送验证码…');
+      try {
+        var r = await window.electronAPI.filingSendCode(e);
+        if (r && r.ok) {
+          say('验证码已发送到 ' + e + '，10 分钟内有效；没收到请检查垃圾邮件。', 'ok');
+          code.focus();
+          startCooldown(60);
+        } else {
+          var m = (r && r.error) || '请稍后再试';
+          say('发送失败：' + m, 'err');
+          if (/频繁|稍后|60/.test(m)) startCooldown(60);
+          else { send.disabled = false; send.textContent = '发送验证码'; }
+        }
+      } catch (err) {
+        say('发送失败：' + err, 'err');
+        send.disabled = false;
+        send.textContent = '发送验证码';
+      }
+    });
+
+    bind.addEventListener('click', async function () {
+      var e = (email.value || '').trim(), c = (code.value || '').trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { say('请先填写正确的收件邮箱', 'err'); return; }
+      if (!/^\d{6}$/.test(c)) { say('请填写 6 位验证码', 'err'); return; }
+      bind.disabled = true;
+      bind.textContent = '验证中…';
+      say('正在验证并绑定…');
+      try {
+        var r = await window.electronAPI.filingRegister(e, c);
+        if (r && r.ok) {
+          say('绑定成功，已开始监控 ' + (r.apps || 0) + ' 个游戏', 'ok');
+          code.value = '';
+        } else {
+          say('绑定失败：' + ((r && r.error) || '请检查验证码'), 'err');
+        }
+      } catch (err) { say('绑定失败：' + err, 'err'); }
+      bind.disabled = false;
+      paint();
+    });
+
+    toggle.addEventListener('change', async function () {
+      var on = toggle.checked;
+      toggle.disabled = true;
+      say(on ? '正在开启备案提醒…' : '正在关闭备案提醒…');
+      try {
+        if (on) await window.electronAPI.filingEnable(); else await window.electronAPI.filingDisable();
+        say(on ? '备案提醒已开启' : '备案提醒已关闭（绑定保留）', 'ok');
+      } catch (e) { toggle.checked = !on; say('操作失败，请重试', 'err'); }
+      toggle.disabled = false;
+      paint();
+    });
+
+    test.addEventListener('click', async function () {
+      if (test.disabled) return;
+      test.disabled = true;
+      say('正在发送测试邮件…');
+      try {
+        var r = await window.electronAPI.filingTestMail();
+        if (r && r.ok) say('测试邮件已发送，请查收', 'ok');
+        else say('发送失败：' + ((r && r.error) || '请稍后再试'), 'err');
+      } catch (e) { say('发送失败', 'err'); }
+      test.disabled = false;
+    });
+
+    paint();
+    resumeCooldown();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(init, 800));
+  else setTimeout(init, 800);
+})();
+
+/* ---------- 首页游戏卡片：备案/广告状态（累计广告收益右侧） ---------- */
+(function () {
+  'use strict';
+  if (!window.electronAPI || !window.electronAPI.fetch) return;
+  var CACHE = new Map();
+  var TTL = 10 * 60 * 1000;
+  var queue = [], busy = false, scanTimer = null;
+  var API = 'https://developer.taptap.cn';
+  var LABELS = {
+    AD: { label: '广告已开通', cls: 'ok' },
+    PENDING: { label: '备案审核中', cls: 'credit' },
+    PASSED: { label: '备案已通过', cls: 'ok' },
+    REJECTED: { label: '备案已驳回', cls: 'warn' },
+    NONE: { label: '未备案', cls: 'muted' }
+  };
+
+  function parse(r) {
+    if (!r) return null;
+    if (typeof r.body === 'string') { try { return JSON.parse(r.body); } catch (e) { return null; } }
+    if (r.body && typeof r.body === 'object') return r.body;
+    if (r.data || r.success !== undefined) return r;
+    return null;
+  }
+
+  async function devId() {
+    try {
+      var d = window.electronAPI.getActiveDeveloperId
+        ? await window.electronAPI.getActiveDeveloperId()
+        : await window.electronAPI.getDeveloperId();
+      return d ? String(d) : '';
+    } catch (e) { return ''; }
+  }
+
+  async function lookup(appId, dev) {
+    var key = dev + ':' + appId;
+    var hit = CACHE.get(key);
+    if (hit && Date.now() - hit.ts < TTL) return hit;
+    var q = '?app_id=' + encodeURIComponent(appId) + '&developer_id=' + encodeURIComponent(dev);
+    var ad = parse(await window.electronAPI.fetch(API + '/api/mini-app/v1/ad/info' + q).catch(function () { return null; }));
+    var result = null;
+    if (ad && ad.data && (ad.data.is_enabled === true || ad.data.is_enabled === 1 || ad.data.isEnabled === true)) {
+      result = LABELS.AD;
+    } else if (ad) {
+      var fil = parse(await window.electronAPI.fetch(API + '/api/mini-app/v2/filing/info' + q).catch(function () { return null; }));
+      var d = fil && fil.data ? fil.data : null;
+      var st = d ? Number(d.status != null ? d.status : d.filing_status) : NaN;
+      if (st === 2) result = LABELS.PASSED;
+      else if (st === 1) result = LABELS.PENDING;
+      else if (st === 3) result = LABELS.REJECTED;
+      else if (d) result = LABELS.NONE;
+    }
+    if (!result) return null;
+    var rec = { label: result.label, cls: result.cls, ts: Date.now() };
+    CACHE.set(key, rec);
+    return rec;
+  }
+
+  function paint(card, res) {
+    var sub = card.querySelector('.game-sub');
+    if (!sub) return;
+    var el = sub.querySelector('.filing-inline');
+    if (!el) {
+      el = document.createElement('span');
+      sub.appendChild(el);
+    }
+    el.className = 'op-badge filing-inline ' + res.cls;
+    el.textContent = res.label;
+  }
+
+  function pump() {
+    if (busy) return;
+    var job = queue.shift();
+    if (!job) return;
+    busy = true;
+    lookup(job.id, job.dev).then(function (res) {
+      if (res && job.card.isConnected) paint(job.card, res);
+    }).catch(function () {}).then(function () {
+      busy = false;
+      setTimeout(pump, 160);
+    });
+  }
+
+  function scan() {
+    var list = document.getElementById('game-list');
+    if (!list) return;
+    var cards = list.querySelectorAll('.game-card[data-app-id]');
+    if (!cards.length) return;
+    devId().then(function (dev) {
+      if (!dev) return;
+      for (var i = 0; i < cards.length; i++) {
+        var card = cards[i];
+        var id = card.getAttribute('data-app-id');
+        if (!id) continue;
+        var tag = dev + ':' + id;
+        if (card.__filingTag === tag) continue;
+        card.__filingTag = tag;
+        queue.push({ card: card, id: id, dev: dev });
+      }
+      pump();
+    });
+  }
+
+  function schedule() {
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(scan, 400);
+  }
+
+  function reset() {
+    CACHE.clear();
+    queue.length = 0;
+    var cards = document.querySelectorAll('#game-list .game-card[data-app-id]');
+    for (var i = 0; i < cards.length; i++) delete cards[i].__filingTag;
+    schedule();
+  }
+
+  var list = document.getElementById('game-list');
+  if (list) new MutationObserver(schedule).observe(list, { childList: true, subtree: true });
+  try {
+    window.electronAPI.onStudioSwitched && window.electronAPI.onStudioSwitched(reset);
+    window.electronAPI.onAccountUpdated && window.electronAPI.onAccountUpdated(reset);
+    window.electronAPI.onLoginSuccess && window.electronAPI.onLoginSuccess(reset);
+    window.electronAPI.onAppResume && window.electronAPI.onAppResume(reset);
+  } catch (e) {}
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) reset(); });
+  setInterval(function () { if (!document.hidden) { reset(); } }, 5 * 60 * 1000);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', schedule);
+  else schedule();
+})();

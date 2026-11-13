@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 
 // ====== 常量（VERSION_CODE 必须和 Android BuildConfig.VERSION_CODE 对齐）======
-const APP_VERSION = '1.0.7';
-const VERSION_CODE = 7;                 // 整数，服务器 version_code > 此值视为有更新
+const APP_VERSION = '1.0.9';
+const VERSION_CODE = 9;                 // 整数，服务器 version_code > 此值视为有更新
 const UPDATE_URL = 'https://ark.yanyususu.online/tapsulor/version.json';
 // 部分网络环境下该域名 HTTPS 会被中断（Chromium 内核报 ERR_CONNECTION_CLOSED），自动回退 http
 const UPDATE_URL_FALLBACK = 'http://ark.yanyususu.online/tapsulor/version.json';
@@ -1704,6 +1704,109 @@ ipcMain.handle('bridge:replayApi', async (event, url) => {
   }
 });
 ipcMain.handle('bridge:replayKeyApis', () => ({ count: 0, saved: false }));
+
+// ==================== 备案提醒（服务端轮询 + 邮件） ====================
+const FILING_BASE = 'https://ark.yanyususu.online/tapsulor-filing';
+
+function filingDeviceId() {
+  if (!preferences.filing_device_id) {
+    preferences.filing_device_id = require('crypto').randomUUID();
+    writeJSON(PREFS_FILE, preferences);
+  }
+  return preferences.filing_device_id;
+}
+function filingDev() {
+  if (activeDeveloperId) return activeDeveloperId;
+  for (const acc of (accounts.accounts || [])) {
+    const d = acc.activeDeveloperId || acc.developerId;
+    if (d) return d;
+  }
+  return '';
+}
+function filingToken(dev) {
+  return (preferences.filing_tokens || {})[dev] || '';
+}
+function filingSaveToken(dev, token) {
+  preferences.filing_tokens = preferences.filing_tokens || {};
+  preferences.filing_tokens[dev] = token;
+  writeJSON(PREFS_FILE, preferences);
+}
+async function filingCookies() {
+  const list = await session.defaultSession.cookies.get({ url: 'https://developer.taptap.cn/' });
+  return list.map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, secure: !!c.secure, httpOnly: !!c.httpOnly }));
+}
+async function filingPost(path, payload, token) {
+  try {
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+    if (token) headers['X-Device-Token'] = token;
+    const r = await net.fetch(FILING_BASE + path, { method: 'POST', headers, body: JSON.stringify(payload) });
+    return await r.text();
+  } catch (e) {
+    return JSON.stringify({ ok: false, error: String(e.message || e) });
+  }
+}
+async function filingRefreshSilent() {
+  const dev = filingDev();
+  const token = filingToken(dev);
+  if (!dev || !token || !preferences.filing_enabled) return;
+  await filingPost('/refresh', { cookies: await filingCookies() }, token).catch(() => {});
+}
+
+ipcMain.handle('bridge:filingSendCode', async (event, email) => {
+  return filingPost('/send-code', { email: String(email || ''), device_id: filingDeviceId() });
+});
+ipcMain.handle('bridge:filingRegister', async (event, email, code) => {
+  const dev = filingDev();
+  if (!dev) return JSON.stringify({ ok: false, error: '未识别开发者账号' });
+  const payload = { device_id: filingDeviceId(), developer_id: dev, email: String(email || ''), code: String(code || ''), cookies: await filingCookies() };
+  const r = await filingPost('/register', payload);
+  try {
+    const j = JSON.parse(r);
+    if (j.ok && j.token) {
+      filingSaveToken(dev, j.token);
+      preferences.filing_email = String(email || '');
+      preferences.filing_enabled = true;
+      writeJSON(PREFS_FILE, preferences);
+    }
+  } catch (_) {}
+  return r;
+});
+ipcMain.handle('bridge:filingRefresh', async () => {
+  const dev = filingDev();
+  const token = filingToken(dev);
+  if (!dev || !token) return JSON.stringify({ ok: true, skipped: true });
+  return filingPost('/refresh', { cookies: await filingCookies() }, token);
+});
+ipcMain.handle('bridge:filingEnable', async () => {
+  const dev = filingDev();
+  const token = filingToken(dev);
+  if (!token) return JSON.stringify({ ok: false, error: '尚未绑定邮箱' });
+  const r = await filingPost('/enable', {}, token);
+  preferences.filing_enabled = true;
+  writeJSON(PREFS_FILE, preferences);
+  return r;
+});
+ipcMain.handle('bridge:filingDisable', async () => {
+  const dev = filingDev();
+  const token = filingToken(dev);
+  const r = token ? await filingPost('/disable', {}, token) : JSON.stringify({ ok: true });
+  preferences.filing_enabled = false;
+  writeJSON(PREFS_FILE, preferences);
+  return r;
+});
+ipcMain.handle('bridge:filingTestMail', async () => {
+  const token = filingToken(filingDev());
+  if (!token) return JSON.stringify({ ok: false, error: '尚未绑定邮箱' });
+  return filingPost('/test-mail', {}, token);
+});
+ipcMain.on('bridge:filingStateSync', (event) => {
+  const dev = filingDev();
+  event.returnValue = {
+    enabled: !!preferences.filing_enabled && !!filingToken(dev),
+    email: preferences.filing_email || '',
+    hasToken: !!filingToken(dev),
+  };
+});
 
 ipcMain.handle('bridge:getPreferences', () => preferences);
 
