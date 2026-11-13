@@ -1736,14 +1736,24 @@ async function filingCookies() {
   return list.map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, secure: !!c.secure, httpOnly: !!c.httpOnly }));
 }
 async function filingPost(path, payload, token) {
-  try {
-    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
-    if (token) headers['X-Device-Token'] = token;
-    const r = await net.fetch(FILING_BASE + path, { method: 'POST', headers, body: JSON.stringify(payload) });
-    return await r.text();
-  } catch (e) {
-    return JSON.stringify({ ok: false, error: String(e.message || e) });
+  // 网络瞬断自动重试一次；错误信息给人话
+  let lastErr = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      if (token) headers['X-Device-Token'] = token;
+      const r = await net.fetch(FILING_BASE + path, { method: 'POST', headers, body: JSON.stringify(payload) });
+      return await r.text();
+    } catch (e) {
+      lastErr = String((e && e.message) || e);
+      if (attempt === 0) await new Promise(r => setTimeout(r, 1500));
+    }
   }
+  let msg = '网络异常，请重试';
+  if (/timeout/i.test(lastErr)) msg = '网络超时，请重试';
+  else if (/closed|reset/i.test(lastErr)) msg = '网络连接中断，请重试';
+  else if (/resolve|connect|ECONN|ENOTFOUND/i.test(lastErr)) msg = '网络不可用，请检查网络后重试';
+  return JSON.stringify({ ok: false, error: msg });
 }
 async function filingRefreshSilent() {
   const dev = filingDev();
@@ -1751,6 +1761,60 @@ async function filingRefreshSilent() {
   if (!dev || !token || !preferences.filing_enabled) return;
   await filingPost('/refresh', { cookies: await filingCookies() }, token).catch(() => {});
 }
+
+// ====== 备案状态主动上报：桌面常驻（托盘）时自己查自己的游戏，服务器只兜底 ======
+let filingScanBusy = false;
+async function filingScanAndReport() {
+  if (filingScanBusy) return;
+  const dev = filingDev();
+  const token = filingToken(dev);
+  if (!dev || !token || !preferences.filing_enabled) return;
+  filingScanBusy = true;
+  try {
+    const cookieHeader = (await filingCookies())
+      .map(c => `${c.name}=${c.value}`).join('; ');
+    const headers = { 'User-Agent': DESKTOP_UA, 'Accept': 'application/json, text/plain, */*' };
+    if (cookieHeader) headers['Cookie'] = cookieHeader;
+
+    async function getJSON(url) {
+      const r = await net.fetch(url, { headers });
+      const body = await r.text();
+      if (!r.ok) return { status: r.status, json: null };
+      try { return { status: r.status, json: JSON.parse(body) }; } catch { return { status: r.status, json: null }; }
+    }
+
+    const lc = await getJSON(`https://developer.taptap.cn/api/app/v2/list?developer_id=${encodeURIComponent(dev)}&page=1&pagesize=100`);
+    const list = (lc.json && lc.json.data && lc.json.data.list) || [];
+    if (!list.length) return;
+
+    const statuses = [];
+    for (const app of list) {
+      if (!app || !app.id) continue;
+      const q = `?app_id=${encodeURIComponent(app.id)}&developer_id=${encodeURIComponent(dev)}`;
+      // 产品口径：广告已开通即视为备案通过
+      const ad = await getJSON(`https://developer.taptap.cn/api/mini-app/v1/ad/info${q}`);
+      if (ad.status === 401 || ad.status === 403) return; // 登录态失效：留给服务器兜底
+      let status = null;
+      if (ad.json && ad.json.data && ad.json.data.is_enabled === true) status = 'AD_ENABLED';
+      if (!status) {
+        const fi = await getJSON(`https://developer.taptap.cn/api/mini-app/v2/filing/info${q}`);
+        if (fi.status === 401 || fi.status === 403) return;
+        const d = (fi.json && fi.json.data) || {};
+        const st = Number(d.status != null ? d.status : d.filing_status);
+        if (st === 1) status = 'PENDING';
+        else if (st === 2) status = 'PASSED';
+        else if (st === 3) status = 'REJECTED';
+      }
+      if (status) statuses.push({ app_id: String(app.id), title: String(app.title || ''), status });
+      await new Promise(r => setTimeout(r, 150));
+    }
+    if (!statuses.length) return;
+    await filingPost('/report', { statuses }, token);
+  } catch (e) { /* 静默：网络异常下轮再试 */ }
+  finally { filingScanBusy = false; }
+}
+setInterval(filingScanAndReport, 60 * 1000);
+setTimeout(filingScanAndReport, 8000);
 
 ipcMain.handle('bridge:filingSendCode', async (event, email) => {
   return filingPost('/send-code', { email: String(email || ''), device_id: filingDeviceId() });
